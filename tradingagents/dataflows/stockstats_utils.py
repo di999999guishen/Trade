@@ -192,19 +192,42 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             data = cached
 
     if data is None:
-        downloaded = yf_retry(lambda: yf.download(
-            canonical,
-            start=start_str,
-            end=end_str,
-            multi_level_index=False,
-            progress=False,
-            auto_adjust=True,
-        ))
-        downloaded = _ensure_date_column(downloaded.reset_index())
+        # Try domestic APIs (Sina/Tencent via akshare_data) first for A-share/HK stocks,
+        # then fall back to yfinance for US stocks and as a safety net.
+        downloaded = None
+        akshare_err = None
+
+        # Determine if this is a domestic stock that our APIs support
+        is_domestic = canonical.endswith((".SZ", ".SS", ".HK", ".BJ")) or not any(
+            canonical.endswith(s) for s in (".T", ".L", ".TO", ".AX", ".NS", ".BO")
+        )
+
+        if is_domestic:
+            try:
+                from .akshare_data import load_ohlcv_akshare
+                downloaded = load_ohlcv_akshare(symbol, curr_date)
+            except NoMarketDataError as e:
+                akshare_err = e  # Will try yfinance below
+            except Exception as e:
+                logger.warning("akshare vendor error for %s: %s", symbol, e)
+                akshare_err = e
+
+        if downloaded is None or downloaded.empty or "Close" not in downloaded.columns:
+            downloaded = yf_retry(lambda: yf.download(
+                canonical,
+                start=start_str,
+                end=end_str,
+                multi_level_index=False,
+                progress=False,
+                auto_adjust=True,
+            ))
+            downloaded = _ensure_date_column(downloaded.reset_index())
+
         # Only cache real data — never persist an empty frame.
         if downloaded.empty or "Close" not in downloaded.columns:
+            vendor = "domestic APIs + Yahoo Finance" if is_domestic else "Yahoo Finance"
             raise NoMarketDataError(
-                symbol, canonical, "Yahoo Finance returned no rows"
+                symbol, canonical, f"{vendor} returned no rows"
             )
         downloaded.to_csv(data_file, index=False, encoding="utf-8")
         data = downloaded

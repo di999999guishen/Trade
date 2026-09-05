@@ -8,7 +8,6 @@ from pathlib import Path
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a trading prediction.")
     parser.add_argument("ticker", nargs="?", default="0700.HK")
