@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "timezone": "Asia/Shanghai",
+  "publish_time": "18:00",
+  "data_cutoff": "18:00",
+  "market_data_dir": "datasets/market",
+  "external_data_dir": "datasets/external",
+  "legacy_cache_dir": null,
+  "state_db": "state/research.db",
+  "runs_dir": "runs",
+  "etf_market": {
+    "snapshot_dir": "datasets/etf_market",
+    "screen": {
+      "asset_classes": ["equity", "commodity", "multi_asset"],
+      "min_amount": 5000000,
+      "min_market_cap": 50000000,
+      "top_n": 20,
+      "max_per_group": 1
+    }
+  },
+  "tradingagents": {
+    "project_dir": "..",
+    "reports_dir": "runs/tradingagents",
+    "timeout_seconds": 1800
+  },
+  "workflow": {
+    "skip_tradingagents": true,
+    "skip_reason": "user_requested_skip_authentication_blocker"
+  },
+  "horizons": [5, 20],
+  "model": {
+    "min_train_dates": 252,
+    "max_train_dates": 756,
+    "test_window_dates": 20,
+    "calibration_fraction": 0.2,
+    "min_calibration_rows": 80,
+    "max_fit_rows": 2500,
+    "learning_rate": 0.08,
+    "iterations": 180,
+    "l2": 0.01,
+    "validation_gate": {
+      "require_brier_below_historical_rate": true,
+      "minimum_rows": 1000
+    }
+  },
+  "universes": {
+    "commodity": [
+      {"symbol": "518880", "name": "黄金ETF", "asset_type": "commodity_spot_etf", "exposure": "gold"},
+      {"symbol": "159934", "name": "黄金ETF", "asset_type": "commodity_spot_etf", "exposure": "gold"},
+      {"symbol": "159937", "name": "黄金基金ETF", "asset_type": "commodity_spot_etf", "exposure": "gold"},
+      {"symbol": "159985", "name": "豆粕ETF", "asset_type": "commodity_futures_etf", "exposure": "soybean_meal"},
+      {"symbol": "159980", "name": "有色ETF", "asset_type": "commodity_futures_etf", "exposure": "nonferrous_metals"},
+      {"symbol": "159981", "name": "能源化工ETF", "asset_type": "commodity_futures_etf", "exposure": "energy_chemicals"},
+      {"symbol": "501018", "name": "南方原油", "asset_type": "cross_border_commodity_fund", "exposure": "crude_oil"},
+      {"symbol": "162411", "name": "华宝油气", "asset_type": "resource_equity_fund", "exposure": "oil_gas_equities"}
+    ],
+    "cached": [
+      {"symbol": "510300", "name": "沪深300ETF", "asset_type": "broad_market_etf", "exposure": "cn_large_cap"},
+      {"symbol": "510500", "name": "中证500ETF", "asset_type": "broad_market_etf", "exposure": "cn_mid_cap"},
+      {"symbol": "510050", "name": "上证50ETF", "asset_type": "broad_market_etf", "exposure": "cn_large_cap"},
+      {"symbol": "159915", "name": "创业板ETF", "asset_type": "broad_market_etf", "exposure": "cn_growth"},
+      {"symbol": "588000", "name": "科创50ETF", "asset_type": "broad_market_etf", "exposure": "cn_star"},
+      {"symbol": "512880", "name": "证券ETF", "asset_type": "sector_equity_etf", "exposure": "securities"},
+      {"symbol": "512660", "name": "军工ETF", "asset_type": "sector_equity_etf", "exposure": "defense"},
+      {"symbol": "512170", "name": "医疗ETF", "asset_type": "sector_equity_etf", "exposure": "healthcare"},
+      {"symbol": "512800", "name": "银行ETF", "asset_type": "sector_equity_etf", "exposure": "banks"},
+      {"symbol": "159995", "name": "芯片ETF", "asset_type": "sector_equity_etf", "exposure": "semiconductors"}
+    ],
+    "screened_current": [
+      {"symbol": "516670", "name": "畜牧养殖ETF招商", "asset_type": "thematic_equity_etf", "exposure": "livestock"},
+      {"symbol": "159593", "name": "中证A50ETF平安", "asset_type": "broad_market_etf", "exposure": "cn_large_cap"},
+      {"symbol": "515220", "name": "煤炭ETF国泰", "asset_type": "sector_equity_etf", "exposure": "coal"}
+    ]
+  },
+  "external_series": {
+    "XAU": {"market": "global", "name": "伦敦金代理", "availability_lag_days": 1},
+    "CL": {"market": "global", "name": "WTI原油代理", "availability_lag_days": 1},
+    "AU0": {"market": "domestic", "name": "沪金主连", "availability_lag_days": 0},
+    "M0": {"market": "domestic", "name": "豆粕主连", "availability_lag_days": 0},
+    "CU0": {"market": "domestic", "name": "沪铜主连", "availability_lag_days": 0},
+    "AL0": {"market": "domestic", "name": "沪铝主连", "availability_lag_days": 0},
+    "ZN0": {"market": "domestic", "name": "沪锌主连", "availability_lag_days": 0},
+    "SC0": {"market": "domestic", "name": "原油主连", "availability_lag_days": 0},
+    "TA0": {"market": "domestic", "name": "PTA主连", "availability_lag_days": 0},
+    "MA0": {"market": "domestic", "name": "甲醇主连", "availability_lag_days": 0},
+    "PP0": {"market": "domestic", "name": "聚丙烯主连", "availability_lag_days": 0}
+  },
+  "exposure_series": {
+    "gold": ["AU0", "XAU"],
+    "soybean_meal": ["M0"],
+    "nonferrous_metals": ["CU0", "AL0", "ZN0"],
+    "energy_chemicals": ["SC0", "TA0", "MA0", "PP0"],
+    "crude_oil": ["SC0", "CL"],
+    "oil_gas_equities": ["CL"]
+  },
+  "news": {
+    "raw_dir": "datasets/news/raw",
+    "sources": [
+      {"id": "eia_today_in_energy", "type": "rss", "url": "https://www.eia.gov/rss/todayinenergy.xml", "reliability": 0.98, "directness": 0.95, "default_exposures": []},
+      {"id": "federal_reserve", "type": "rss", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "reliability": 0.99, "directness": 0.95, "default_exposures": []},
+      {"id": "ndrc_news", "type": "ndrc_html", "url": "https://www.ndrc.gov.cn/xwdt/xwfb/", "reliability": 0.99, "directness": 0.95, "default_exposures": []}
+    ],
+    "exposure_keywords": {
+      "gold": ["黄金", "贵金属", "gold", "interest rate", "利率"],
+      "crude_oil": ["原油", "成品油", "石油", "oil", "petroleum", "gasoline"],
+      "oil_gas_equities": ["油气", "天然气", "石油", "oil", "petroleum", "natural gas", "LNG", "energy company"],
+      "soybean_meal": ["豆粕", "大豆", "soybean", "soymeal", "feed grain"],
+      "nonferrous_metals": ["有色", "铜", "铝", "锌", "金属", "copper", "aluminum", "zinc", "metal"],
+      "energy_chemicals": ["能源化工", "原油", "天然气", "甲醇", "PTA", "聚丙烯", "chemical", "petrochemical", "natural gas", "LNG", "oil"]
+    }
+  }
+}

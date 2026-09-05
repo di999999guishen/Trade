@@ -49,6 +49,17 @@
 >
 > So we decided to fully open-source the framework. Looking forward to building impactful projects with you!
 
+## A股 ETF 信息获取与预测研究模块
+
+仓库中的 [`prediction_research/`](prediction_research/) 提供独立的 A 股 ETF 研究链路：全市场行情与资金流快照、ETF 分类、资金流粗筛、候选日线、5/20 日严格滚动回测、概率质量门、预测冻结、到期结算和审计报告。TradingAgents 在该链路中是粗筛后的可选证据层；未配置可用密钥时可以跳过，不影响定量流程。
+
+```powershell
+python -m prediction_research.cli cycle --top 3
+python -m prediction_research.cli status
+```
+
+完整中文用法见 [`prediction_research/USAGE.md`](prediction_research/USAGE.md)。该模块只用于研究，不自动下单。
+
 ## TradingAgents Framework
 
 TradingAgents is a multi-agent trading framework that mirrors the dynamics of real-world trading firms. By deploying specialized LLM-powered agents: from fundamental analysts, sentiment experts, and technical analysts, to trader, risk management team, the platform collaboratively evaluates market conditions and informs trading decisions. Moreover, these agents engage in dynamic discussions to pinpoint the optimal strategy.
