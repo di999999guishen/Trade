@@ -8,6 +8,17 @@
   "legacy_cache_dir": null,
   "state_db": "state/research.db",
   "runs_dir": "runs",
+  "evidence": {
+    "enabled": true,
+    "inbox_dir": "datasets/evidence_inbox",
+    "raw_dir": "datasets/evidence",
+    "experiment_universe": "commodity",
+    "max_age_days": 14,
+    "flow_anomaly_pct": 20,
+    "minimum_observation_days": 60,
+    "minimum_train_observation_days": 20,
+    "minimum_test_rows": 200
+  },
   "etf_market": {
     "snapshot_dir": "datasets/etf_market",
     "screen": {

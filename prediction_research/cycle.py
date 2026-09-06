@@ -25,6 +25,8 @@ def run_cycle(cfg: dict, top_n: int = 3, skip_fetch: bool = False) -> dict:
                 source_states = [item.get("status") for item in value.get("sources", {}).values()]
                 if "failed" in source_states or value.get("failures"):
                     status = "partial"
+                if value.get("outcome") == "partial_failure":
+                    status = "partial"
             report["steps"].append({"name": name, "status": status, "result": value})
             return value
         except Exception as exc:
@@ -56,6 +58,14 @@ def run_cycle(cfg: dict, top_n: int = 3, skip_fetch: bool = False) -> dict:
     assets = [{"symbol": row["symbol"]} for row in candidate_rows]
     if not skip_fetch:
         step("fetch_candidate_histories", lambda: fetch_universe(assets, market_data_dir(cfg)))
+    if cfg.get("evidence", {}).get("enabled", False):
+        from .etf_integration import run_etf_integration
+
+        def integration():
+            payload = run_etf_integration(cfg)
+            return {"outcome": payload["outcome"], "summary_path": payload["summary_path"]}
+
+        step("etf_evidence_integration", integration)
     for horizon in cfg["horizons"]:
         step(f"backtest_{horizon}d", lambda horizon=horizon: str(run_backtest(cfg, "screened_current", horizon, "base", "pooled")[0]))
         step(f"predict_{horizon}d", lambda horizon=horizon: str(run_prediction(cfg, "screened_current", horizon, "base", "pooled")[0]))

@@ -10,6 +10,24 @@ from pathlib import Path
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS research_evidence (
+  evidence_id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  available_at_utc TEXT NOT NULL,
+  observed_at_utc TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  UNIQUE(source, source_key, symbol, kind)
+);
+CREATE INDEX IF NOT EXISTS ix_research_evidence_time
+ON research_evidence(symbol, available_at_utc);
+CREATE TABLE IF NOT EXISTS evidence_mapping_versions (
+  mapping_hash TEXT PRIMARY KEY,
+  first_seen_at_utc TEXT NOT NULL,
+  mapping_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS predictions (
   prediction_id TEXT PRIMARY KEY,
   symbol TEXT NOT NULL,

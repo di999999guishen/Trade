@@ -63,6 +63,18 @@ def build_research_report(cfg: dict) -> Path:
         lines.append(f"- {event['title']}｜证据分 {event['evidence_score']:.4f}｜敞口：{', '.join(event['exposures'])}")
     if not mapped_events:
         lines.append(f"- 当前事件库没有与 {', '.join(sorted(candidate_exposures))} 直接映射的合格事件；不使用无关商品新闻补位。")
+    if "etf_evidence" in status:
+        evidence = status["etf_evidence"]
+        integration = status["etf_integration"]
+        lines.extend(["", "## ETF 标准证据与阶段整合", "",
+                      f"标准证据共 {evidence['records']} 条；整合状态：`{integration['outcome']}`。",
+                      "资金流仅为成交单大小估计，资金主体身份尚不可观测。A 股个股与 TradingAgents-Astock 延期。",
+                      "| 来源 | 记录数 |", "|---|---:|"])
+        for source, count in evidence["by_source"].items():
+            lines.append(f"| {source} | {count} |")
+        if integration.get("summary_path"):
+            lines.extend(["", f"阶段明细：`{integration['summary_path']}`。",
+                          "增益实验使用相同时间切分与标签；缺乏当时可得的历史证据时等待积累，不升级概率模型。"])
     lines.extend(["", "## 下一检查点", "", "每日保存新的全市场 ETF 资金流截面；达到足够历史长度后，按当日可得信息重建候选池并验证完整轮动规则。当前预测到 5/20 个交易日后由 `settle` 自动结算。"])
     path = runs / f"research_report_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

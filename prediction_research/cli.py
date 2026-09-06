@@ -16,6 +16,16 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("doctor", help="inspect data coverage without changing source data")
     commands.add_parser("status", help="show the end-to-end workflow checkpoint")
     commands.add_parser("report", help="build a consolidated auditable research report")
+    integrate = commands.add_parser("integrate-etfs", help="run ETF evidence stages with per-stage Markdown")
+    integrate.add_argument("--universe", help="configured ETF experiment universe")
+    commands.add_parser("evidence-status", help="show ETF evidence and deferred external modules")
+    commands.add_parser("evidence-profiles", help="describe ETF flow observations without inferring account identity")
+    commands.add_parser("evidence-chains", help="show available news-sector-ETF evidence paths")
+    evidence_import = commands.add_parser("import-evidence", help="import ETF-only standardized external JSON")
+    evidence_import.add_argument("path")
+    evidence_test = commands.add_parser("backtest-evidence", help="paired evidence ablations against price-volume v2")
+    evidence_test.add_argument("--universe", default="commodity")
+    evidence_test.add_argument("--horizon", type=int, default=5)
     cycle = commands.add_parser("cycle", help="run the end-to-end research workflow")
     cycle.add_argument("--top", type=int, default=3)
     cycle.add_argument("--skip-fetch", action="store_true", help="reuse frozen network snapshots")
@@ -60,7 +70,38 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         cfg = load_config(args.config)
-        if args.command == "doctor":
+        if args.command == "integrate-etfs":
+            from .etf_integration import run_etf_integration
+
+            payload = run_etf_integration(cfg, args.universe)
+            result = {key: payload[key] for key in ("outcome", "summary_path", "scope")}
+            result["stages"] = [{key: row[key] for key in ("stage", "name", "status", "markdown_path")}
+                                for row in payload["stages"]]
+        elif args.command == "evidence-status":
+            from .evidence import evidence_status
+
+            result = evidence_status(cfg)
+        elif args.command == "evidence-profiles":
+            from .etf_evidence import etf_profiles
+
+            result = etf_profiles(cfg)
+        elif args.command == "evidence-chains":
+            from .etf_evidence import chain_report
+
+            result = chain_report(cfg)
+        elif args.command == "import-evidence":
+            from pathlib import Path
+
+            from .evidence import import_evidence
+
+            result = import_evidence(cfg, Path(args.path))
+        elif args.command == "backtest-evidence":
+            from .evidence_experiments import run_evidence_experiments
+
+            path, payload = run_evidence_experiments(cfg, args.universe, args.horizon)
+            result = {"result_path": str(path.resolve()), "status": payload["status"],
+                      "baseline_metrics": payload["baseline_metrics"], "readiness": payload["readiness"]}
+        elif args.command == "doctor":
             result = doctor(cfg)
         elif args.command == "status":
             from .workflow import workflow_status
@@ -148,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = settle_predictions(cfg)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.command == "integrate-etfs" and result["outcome"] == "partial_failure":
+            return 2
         return 0
     except Exception as exc:
         print(json.dumps({"error": str(exc), "type": type(exc).__name__}, ensure_ascii=False), file=sys.stderr)

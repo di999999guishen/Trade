@@ -194,6 +194,9 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
     validation = _validation_status(cfg, universe, horizon, feature_set, model_scope, model_version)
     db_path = resolve_project_path(cfg, cfg["state_db"])
     predictions = []
+    from .evidence import cutoff_utc, eligible_records, load_records
+
+    standard_evidence = load_records(cfg) if cfg.get("evidence", {}).get("enabled", False) else []
     training_rows = 0
     latest_observed_targets = []
     fitted_models: dict[str, LogisticModel] = {}
@@ -235,6 +238,13 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
             snapshot = snapshots[sample.symbol]
             probability = model.predict_proba(sample.features)
             evidence = [{"type": feature_set + "_features", "feature_names": feature_names, "model_scope": model_scope, "exposure": exposure}]
+            available_evidence = eligible_records(cfg, standard_evidence, sample.symbol,
+                                                   cutoff_utc(cfg, sample.feature_date))
+            if available_evidence:
+                evidence.append({"type": "standard_etf_evidence", "schema_version": 1,
+                                 "as_of_utc": cutoff_utc(cfg, sample.feature_date).isoformat(),
+                                 "evidence_ids": [row["evidence_id"] for row in available_evidence],
+                                 "probability_effect": "none_pending_independent_validation"})
             if sample.symbol in screened_rows:
                 screen_row = screened_rows[sample.symbol]
                 evidence.append({

@@ -57,4 +57,14 @@ def workflow_status(cfg: dict) -> dict:
         {"stage": 6, "name": "预测冻结与到期复盘", "status": "research_predictions_frozen" if frozen_predictions else "quantitative_path_ready" if agent_skipped else "waiting_for_stage_5" if not agent_successes else "ready", "current_screen_open_predictions": frozen_predictions, "all_open_predictions": all_open_predictions, "recorded_cycle_runs": recorded_cycle_runs, "successful_cycle_runs": successful_cycle_runs, "latest_cycle": str(cycle_paths[0].resolve()) if cycle_paths else None},
         {"stage": 7, "name": "TradingAgents独立增益验证", "status": "deferred_while_agents_skipped" if agent_skipped else "pending", "note": "不得把多角色一致意见直接当作概率"},
     ]
-    return {"current_stage": 6 if agent_skipped else 4 if not agent_successes else 5, "active_path": "quantitative_without_tradingagents" if agent_skipped else "full", "blocking_reason": None if agent_skipped else "DeepSeek authentication failed (HTTP 401)" if auth_blocked and not agent_successes else None, "stages": stages}
+    result = {"current_stage": 6 if agent_skipped else 4 if not agent_successes else 5, "active_path": "quantitative_without_tradingagents" if agent_skipped else "full", "blocking_reason": None if agent_skipped else "DeepSeek authentication failed (HTTP 401)" if auth_blocked and not agent_successes else None, "stages": stages}
+    if cfg.get("evidence", {}).get("enabled", False):
+        from .etf_integration import latest_integration
+        from .evidence import evidence_status
+
+        latest = latest_integration(cfg)
+        result["etf_evidence"] = evidence_status(cfg)
+        result["etf_integration"] = {"outcome": latest["outcome"], "summary_path": latest["summary_path"],
+                                     "stages": [{key: row[key] for key in ("stage", "name", "status")}
+                                                for row in latest["stages"]]} if latest and "outcome" in latest else {"outcome": "not_finished"}
+    return result

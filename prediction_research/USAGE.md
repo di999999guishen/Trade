@@ -331,3 +331,10 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 - 当前模型尚未通过总体质量门；
 - TradingAgents 当前跳过；
 - 系统只生成研究结论，不自动下单，也不构成投资建议。
+
+## ETF 证据扩展（2026-09-06）
+
+ETF 分阶段整合入口为 `integrate-etfs`，已接入 `cycle`、`status` 和研究报告。
+具体命令、外部标准文件格式与实验边界见 [ETF_EVIDENCE_USAGE.md](docs/ETF_EVIDENCE_USAGE.md)，
+阶段验收与实际完成情况见 [ETF_INTEGRATION_PHASES.md](docs/ETF_INTEGRATION_PHASES.md)。
+A 股个股及 TradingAgents-Astock 按用户要求延期。
