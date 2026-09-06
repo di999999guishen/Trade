@@ -1,5 +1,15 @@
 # 实施状态
 
+## 2026-09-06：cycle 六项修订
+
+已按 [ETF_CYCLE_REMEDIATION_PLAN.md](ETF_CYCLE_REMEDIATION_PLAN.md) 完成时间口径、不可变冻结、本轮报告隔离、资金流展示、历史候选持续结算、历史筛选研究和失败状态传播的工程修订。候选模型版本升级为 `screened-flow-price-logistic-v2`，概率仍由量价模型产生。
+
+日常操作、状态解释和故障判定已经整理到 [ETF_DAILY_MONITORING.md](ETF_DAILY_MONITORING.md)。
+
+超大单与大单背离已经作为独立 ETF 粗筛因子和 `etf_order_divergence` 标准证据接入，定义与 LLM 交接边界见 [ETF_ORDER_DIVERGENCE.md](ETF_ORDER_DIVERGENCE.md)。旧快照不含分项，不补零；需下一次正常联网快照开始积累真实观测。
+
+真实缓存闭环通过，但资金流只有 1 个观察日；全量合格池等权对照缺 1101 个行情序列，历史增益仍待验证。60 日观察计数本身不代表研究就绪，还须价格、标签和样本外预测完整。未进行联网刷新，也未接入真实第三方资金主体数据。详细验收和报告链接以阶段方案为准。
+
 ## 2026-09-06：ETF 证据整合扩展
 
 按用户最新范围，仅实施 ETF / 当前存量基金，个股 Agent 和 TradingAgents-Astock 延期。

@@ -44,7 +44,7 @@ def workflow_status(cfg: dict) -> dict:
     for cycle_path in cycle_paths:
         cycle = json.loads(cycle_path.read_text(encoding="utf-8"))
         outcome = cycle.get("outcome")
-        if outcome == "complete" or outcome is None and all(
+        if outcome in {"complete", "complete_with_data_waits"} or outcome is None and all(
             item.get("status") in {"ok", "skipped_by_configuration"} for item in cycle.get("steps", [])
         ):
             successful_cycle_runs += 1
@@ -58,6 +58,27 @@ def workflow_status(cfg: dict) -> dict:
         {"stage": 7, "name": "TradingAgents独立增益验证", "status": "deferred_while_agents_skipped" if agent_skipped else "pending", "note": "不得把多角色一致意见直接当作概率"},
     ]
     result = {"current_stage": 6 if agent_skipped else 4 if not agent_successes else 5, "active_path": "quantitative_without_tradingagents" if agent_skipped else "full", "blocking_reason": None if agent_skipped else "DeepSeek authentication failed (HTTP 401)" if auth_blocked and not agent_successes else None, "stages": stages}
+    # Observation count alone does not establish complete prices, matured labels or OOS coverage.
+    stages[2].update(historical_screen_validation_ready=False, historical_validation_status="not_run")
+    if cycle_paths:
+        latest_cycle = json.loads(cycle_paths[0].read_text(encoding="utf-8"))
+        result["latest_cycle"] = {"outcome": latest_cycle.get("outcome"), "data_mode": latest_cycle.get("data_mode"),
+                                  "data_readiness": latest_cycle.get("data_readiness"),
+                                  "decision_at_utc": latest_cycle.get("decision_at_utc"),
+                                  "artifacts": latest_cycle.get("artifacts", {}),
+                                  "validation": latest_cycle.get("validation", {})}
+        strategy_path = latest_cycle.get("artifacts", {}).get("flow_strategy")
+        if strategy_path and Path(strategy_path).exists():
+            strategy = json.loads(Path(strategy_path).read_text(encoding="utf-8"))
+            stages[2].update(
+                historical_screen_validation_ready=strategy.get("status") == "evaluated_research_only",
+                historical_validation_status=strategy.get("status"),
+                historical_validation_report=strategy_path,
+            )
+        if latest_cycle.get("cycle_id") and not latest_cycle.get("artifacts", {}).get("screen"):
+            stages[2].update(status="blocked_in_latest_cycle", selected=0, report=None)
+        if latest_cycle.get("outcome") == "partial_failure":
+            stages[5]["status"] = "latest_cycle_partial_failure"
     if cfg.get("evidence", {}).get("enabled", False):
         from .etf_integration import latest_integration
         from .evidence import evidence_status

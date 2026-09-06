@@ -44,7 +44,12 @@ def decision_direction(value: str | None) -> str:
 def build_plan(cfg: dict, top_n: int) -> dict:
     screen_path, screen = latest_screen(cfg)
     project = resolve_project_path(cfg, cfg["tradingagents"]["project_dir"])
-    candidates = [{"ticker": _ticker(row), "symbol": row["symbol"], "name": row["name"], "screen_score": row["screen_score"], "screen_group": row["screen_group"], "asset_class": row["asset_class"], "subtype": row["subtype"]} for row in screen["selected"][:top_n]]
+    candidates = [{"ticker": _ticker(row), "symbol": row["symbol"], "name": row["name"],
+                   "screen_score": row["screen_score"], "screen_group": row["screen_group"],
+                   "asset_class": row["asset_class"], "subtype": row["subtype"],
+                   "order_divergence": row.get("order_divergence", {"status": "missing_data", "signal": "no_data"}),
+                   "evidence_handoff_status": "available_in_plan_not_injected_into_current_upstream_cli"}
+                  for row in screen["selected"][:top_n]]
     epochs = [int(row["quote_epoch"]) for row in screen["selected"] if row.get("quote_epoch")]
     china_time = timezone(timedelta(hours=8))
     trade_date = datetime.fromtimestamp(max(epochs), china_time).date().isoformat() if epochs else date.today().isoformat()

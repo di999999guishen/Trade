@@ -12,7 +12,7 @@ from .config import resolve_project_path
 from .store import connect
 
 EXTERNAL_SOURCES = ("fingenius", "smart-money-profiler")
-FEATURE_GROUPS = ("etf_flow", "news_chain", "tradingagents", *EXTERNAL_SOURCES)
+FEATURE_GROUPS = ("etf_flow", "etf_order_divergence", "news_chain", "tradingagents", *EXTERNAL_SOURCES)
 KINDS = {"flow", "news", "actor_profile", "anomaly", "analysis"}
 
 

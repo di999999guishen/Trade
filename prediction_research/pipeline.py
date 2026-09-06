@@ -9,13 +9,13 @@ from .data import SeriesSnapshot, configured_data_dirs, find_cache, load_cache, 
 from .evaluation import metrics, serialize_results, walk_forward
 from .features import EXTERNAL_FEATURE_NAMES, FEATURE_NAMES, Sample, augment_with_external, build_samples
 from .model import LogisticModel
-from .store import connect, insert_prediction, record_run
+from .store import connect, frozen_prediction, record_run
 
 
 BASE_MODEL_VERSION = "price-volume-logistic-v2"
 EXTERNAL_MODEL_VERSION = "commodity-external-logistic-v1"
 EXPOSURE_MODEL_VERSION = "commodity-exposure-logistic-v1"
-SCREENED_MODEL_VERSION = "screened-flow-price-logistic-v1"
+SCREENED_MODEL_VERSION = "screened-flow-price-logistic-v3"
 
 
 def _run_path(cfg: dict, prefix: str) -> Path:
@@ -159,8 +159,17 @@ def _latest_backtest(cfg: dict, universe: str, horizon: int, feature_set: str, m
     return None
 
 
-def _validation_status(cfg: dict, universe: str, horizon: int, feature_set: str, model_scope: str, model_version: str) -> dict:
-    report = _latest_backtest(cfg, universe, horizon, feature_set, model_scope, model_version)
+def _validation_status(cfg: dict, universe: str, horizon: int, feature_set: str, model_scope: str, model_version: str,
+                       backtest_path: Path | None = None) -> dict:
+    if backtest_path:
+        frozen_test = json.loads(Path(backtest_path).read_text(encoding="utf-8"))
+        expected = {"universe": universe, "horizon": horizon, "feature_set": feature_set,
+                    "model_scope": model_scope, "model_version": model_version}
+        if any(frozen_test.get(key) != value for key, value in expected.items()):
+            raise ValueError("backtest context does not match prediction")
+        report = {"path": str(Path(backtest_path).resolve()), "metrics": frozen_test["metrics"]}
+    else:
+        report = _latest_backtest(cfg, universe, horizon, feature_set, model_scope, model_version)
     if not report:
         return {"passed": False, "reason": "no matching walk-forward backtest", "report": None}
     metric = report["metrics"]
@@ -176,7 +185,9 @@ def _latest_observed_training(samples: list[Sample], feature_date) -> list[Sampl
     return [sample for sample in samples if sample.target_end_date and sample.target_end_date <= feature_date]
 
 
-def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "auto", model_scope: str = "pooled") -> tuple[Path, dict]:
+def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "auto", model_scope: str = "pooled",
+                   decision_at_utc: str | None = None, screen_context: tuple | None = None,
+                   backtest_path: Path | None = None) -> tuple[Path, dict]:
     metadata, snapshots = load_universe(cfg, universe)
     if len(snapshots) < 2:
         raise ValueError(f"{universe}: need at least two available series; missing={metadata['missing']}")
@@ -191,10 +202,11 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
     current = [sample for sample in latest if sample.feature_date == latest_date and sample.target_up is None]
     stale_assets = {sample.symbol: sample.feature_date.isoformat() for sample in latest if sample.feature_date != latest_date}
     eligible_training = _latest_observed_training(labeled, latest_date)
-    validation = _validation_status(cfg, universe, horizon, feature_set, model_scope, model_version)
+    validation = _validation_status(cfg, universe, horizon, feature_set, model_scope, model_version, backtest_path)
     db_path = resolve_project_path(cfg, cfg["state_db"])
     predictions = []
-    from .evidence import cutoff_utc, eligible_records, load_records
+    from .evidence import cutoff_utc, eligible_records, load_records, utc
+    from .flow_context import flow_context
 
     standard_evidence = load_records(cfg) if cfg.get("evidence", {}).get("enabled", False) else []
     training_rows = 0
@@ -205,10 +217,13 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
     if universe == "screened_current":
         from .screening import latest_screen
 
-        screen_path, screen_payload = latest_screen(cfg)
+        screen_path, screen_payload = screen_context or latest_screen(cfg)
         screened_rows = {row["symbol"]: row for row in screen_payload["selected"]}
     with connect(db_path) as connection:
         for sample in current:
+            decision_at = utc(decision_at_utc) if decision_at_utc else cutoff_utc(cfg, sample.feature_date)
+            if decision_at < cutoff_utc(cfg, sample.feature_date):
+                raise ValueError("decision precedes availability of closing-price features")
             exposure = metadata["metadata"][sample.symbol]["exposure"]
             model_key = exposure if model_scope == "exposure" else "pooled"
             if model_key not in fitted_models:
@@ -238,29 +253,28 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
             snapshot = snapshots[sample.symbol]
             probability = model.predict_proba(sample.features)
             evidence = [{"type": feature_set + "_features", "feature_names": feature_names, "model_scope": model_scope, "exposure": exposure}]
-            available_evidence = eligible_records(cfg, standard_evidence, sample.symbol,
-                                                   cutoff_utc(cfg, sample.feature_date))
+            available_evidence = eligible_records(cfg, standard_evidence, sample.symbol, decision_at)
             if available_evidence:
                 evidence.append({"type": "standard_etf_evidence", "schema_version": 1,
-                                 "as_of_utc": cutoff_utc(cfg, sample.feature_date).isoformat(),
+                                 "as_of_utc": decision_at.isoformat(),
                                  "evidence_ids": [row["evidence_id"] for row in available_evidence],
                                  "probability_effect": "none_pending_independent_validation"})
-            if sample.symbol in screened_rows:
-                screen_row = screened_rows[sample.symbol]
+            flow = flow_context(cfg, sample.symbol, screen_payload if screen_path else None, decision_at)
+            if sample.symbol in screened_rows and flow["status"] == "available":
                 evidence.append({
                     "type": "money_flow_coarse_screen",
                     "screen_report": str(screen_path.resolve()),
-                    "screen_score": screen_row["screen_score"],
-                    "screen_group": screen_row["screen_group"],
-                    "main_net_inflow": screen_row.get("main_net_inflow"),
-                    "main_net_inflow_pct": screen_row.get("main_net_inflow_pct"),
-                    "definition": "transaction-size classification estimate; not ETF creations/redemptions or disclosed institutional holdings",
+                    **flow,
                 })
             item = {
                 "symbol": sample.symbol,
                 "name": metadata["metadata"][sample.symbol]["name"],
                 "asset_type": metadata["metadata"][sample.symbol]["asset_type"],
                 "feature_date": sample.feature_date.isoformat(),
+                "decision_at_utc": decision_at.isoformat(),
+                "entry_policy": "first_session_open_after_decision",
+                "fund_flow": flow,
+                "validation": validation,
                 "horizon": horizon,
                 "expected_target_end": None,
                 "probability_up": round(probability, 6),
@@ -273,10 +287,7 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
                 "data_snapshot": {"path": snapshot.source_path, "sha256": snapshot.sha256, "last_date": sample.feature_date.isoformat(), "provider": snapshot.provider_metadata},
                 "evidence": evidence,
             }
-            prediction_id, inserted = insert_prediction(connection, item)
-            item["prediction_id"] = prediction_id
-            item["inserted"] = inserted
-            predictions.append(item)
+            predictions.append(frozen_prediction(connection, item))
     payload = {
         "run_type": "frozen_prediction",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -301,28 +312,31 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
 
 def settle_predictions(cfg: dict) -> dict:
     db_path = resolve_project_path(cfg, cfg["state_db"])
-    all_assets = {item["symbol"]: item for values in cfg["universes"].values() for item in values}
     directories = configured_data_dirs(cfg)
-    settled = []
+    settled, waiting = [], []
     with connect(db_path) as connection:
         rows = connection.execute(
             "SELECT prediction_id, symbol, feature_date, horizon FROM predictions WHERE settled_at_utc IS NULL"
         ).fetchall()
         for prediction_id, symbol, feature_date, horizon in rows:
-            if symbol not in all_assets:
-                continue
             try:
                 snapshot = find_cache(symbol, directories)
             except (FileNotFoundError, ValueError):
+                waiting.append({"prediction_id": prediction_id, "symbol": symbol, "status": "waiting_for_bars"})
                 continue
-            sample = next((item for item in build_samples(snapshot, int(horizon)) if item.feature_date.isoformat() == feature_date), None)
-            if not sample or sample.target_return is None:
+            from .settlement import decision_outcome
+
+            stored = connection.execute("SELECT payload_json FROM prediction_payloads WHERE prediction_id=?", (prediction_id,)).fetchone()
+            decision = json.loads(stored[0]).get("decision_at_utc") if stored else None
+            outcome = decision_outcome(cfg, snapshot, feature_date, horizon, decision)
+            if outcome is None:
+                waiting.append({"prediction_id": prediction_id, "symbol": symbol, "status": "waiting_for_horizon"})
                 continue
             connection.execute(
                 """UPDATE predictions SET settled_at_utc=?, target_end_date=?, actual_return=?, actual_up=?
                 WHERE prediction_id=? AND settled_at_utc IS NULL""",
-                (datetime.now(timezone.utc).isoformat(), sample.target_end_date.isoformat(), sample.target_return, sample.target_up, prediction_id),
+                (datetime.now(timezone.utc).isoformat(), outcome["target_end_date"], outcome["actual_return"], outcome["actual_up"], prediction_id),
             )
-            settled.append({"prediction_id": prediction_id, "symbol": symbol, "actual_return": sample.target_return, "actual_up": sample.target_up})
+            settled.append({"prediction_id": prediction_id, "symbol": symbol, **outcome})
         connection.commit()
-    return {"eligible_open_predictions": len(rows), "settled": len(settled), "items": settled}
+    return {"eligible_open_predictions": len(rows), "settled": len(settled), "items": settled, "waiting": waiting}

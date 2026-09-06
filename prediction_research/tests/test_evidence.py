@@ -135,7 +135,10 @@ def test_flow_snapshots_not_actor_identity_or_duplicate_days(cfg):
 
     with connect(Path(cfg["_project_dir"]) / cfg["state_db"]) as connection:
         for sha, pct in (("a" * 64, 25.0), ("b" * 64, None)):
-            connection.execute("INSERT INTO etf_flow_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            connection.execute("""INSERT INTO etf_flow_snapshots
+                               (snapshot_sha256,symbol,exchange,name,quote_epoch,retrieved_at_utc,asset_class,subtype,
+                                market_scope,price,change_pct,amount,market_cap,main_net_inflow,main_net_inflow_pct)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                                (sha, "518880", "SH", "测试ETF", 1711969200, "2024-04-01T12:00:00+00:00",
                                 "commodity", "spot", "domestic", 1.0, 1.0, 100, 1000, None, pct))
         connection.commit()

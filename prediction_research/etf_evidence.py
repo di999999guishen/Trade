@@ -11,6 +11,7 @@ from .evidence import digest, eligible_records, etf_assets, load_records, now_ut
 from .events import _published_at
 from .store import connect
 from .tradingagents_adapter import decision_direction
+from .order_divergence import order_divergence
 
 FLOW_DEFINITION = "成交单大小分类估计；不是账户披露、机构身份、ETF 申赎或份额变动"
 
@@ -26,9 +27,11 @@ def sync_etf_evidence(cfg: dict) -> dict:
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
         rows = connection.execute(
             "SELECT snapshot_sha256,symbol,quote_epoch,retrieved_at_utc,main_net_inflow,"
-            "main_net_inflow_pct,amount,change_pct FROM etf_flow_snapshots"
+            "main_net_inflow_pct,amount,change_pct,super_large_net_inflow,"
+            "super_large_net_inflow_pct,large_net_inflow,large_net_inflow_pct FROM etf_flow_snapshots"
         ).fetchall()
-    for sha, symbol, epoch, fetched, net, pct, amount, change in rows:
+    divergence_records = 0
+    for sha, symbol, epoch, fetched, net, pct, amount, change, super_net, super_pct, large_net, large_pct in rows:
         if symbol not in assets:
             continue
         if not epoch:
@@ -49,7 +52,26 @@ def sync_etf_evidence(cfg: dict) -> dict:
             "missing": [key for key, value in (("net_inflow", net), ("net_inflow_pct", pct),
                                                ("amount", amount), ("change_pct", change)) if not _finite(value)],
         })
-    return {**save_records(cfg, records), "skipped_missing_quote_time": missing_time,
+        divergence = order_divergence({"super_large_net_inflow": super_net,
+                                       "super_large_net_inflow_pct": super_pct,
+                                       "large_net_inflow": large_net,
+                                       "large_net_inflow_pct": large_pct}, cfg["etf_market"]["screen"])
+        if divergence["status"] == "available":
+            records.append({
+                "source": "etf_order_divergence", "source_key": sha, "symbol": symbol, "kind": "anomaly",
+                "claim": "超大单与大单方向背离筛选因子；不代表账户身份或未来价格方向",
+                "epistemic": "fact", "source_ref": "eastmoney:etf_flow_snapshots",
+                "snapshot_sha256": sha, "observed_at_utc": observed,
+                "available_at_utc": max(utc(observed), utc(fetched)).isoformat(),
+                "direction": "up" if divergence["signal"] == "bullish_divergence" else
+                             "down" if divergence["signal"] == "bearish_divergence" else "neutral",
+                "score": divergence["factor"], "metrics": divergence,
+                "identity_status": "unobservable", "flow_basis": "transaction_size_estimate",
+                "limitations": ["不识别账户", "不是ETF申赎", "信号效果需独立样本外验证"],
+            })
+            divergence_records += 1
+    return {**save_records(cfg, records), "order_divergence_records": divergence_records,
+            "skipped_missing_quote_time": missing_time,
             "scope": "configured_etfs_only"}
 
 

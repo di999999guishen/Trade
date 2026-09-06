@@ -23,7 +23,7 @@ def fetch_etf_snapshot(output_dir: Path) -> dict:
         "pn": 1, "pz": 100, "po": 1, "np": 1,
         "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": 2, "invt": 2,
         "fid": "f12", "fs": "b:MK0021,b:MK0022,b:MK0023,b:MK0024,b:MK0827",
-        "fields": "f2,f3,f5,f6,f8,f10,f12,f13,f14,f20,f21,f62,f124,f184",
+        "fields": "f2,f3,f5,f6,f8,f10,f12,f13,f14,f20,f21,f62,f66,f69,f72,f75,f124,f184",
     }
     pages = []
     total = None
@@ -71,14 +71,16 @@ def fetch_etf_snapshot(output_dir: Path) -> dict:
             "amount": row.get("f6"), "turnover_pct": row.get("f8"), "volume_ratio": row.get("f10"),
             "market_cap": row.get("f20"), "float_market_cap": row.get("f21"),
             "main_net_inflow": row.get("f62"), "main_net_inflow_pct": row.get("f184"),
+            "super_large_net_inflow": row.get("f66"), "super_large_net_inflow_pct": row.get("f69"),
+            "large_net_inflow": row.get("f72"), "large_net_inflow_pct": row.get("f75"),
             "quote_epoch": row.get("f124"),
         }
         records.append(record)
     snapshot = {
-        "schema_version": 1, "retrieved_at_utc": retrieved,
+        "schema_version": 2, "retrieved_at_utc": retrieved,
         "source": source_url, "source_market_total": total,
         "classification_status": "market universe from ETF quote boards; per-record asset/subtype labels are name-inferred and require contract verification",
-        "flow_definition": "Eastmoney f62/f184 transaction-size classification estimate; not ETF creations/redemptions and not disclosed institutional holdings",
+        "flow_definition": "Eastmoney f62/f184 main flow plus f66/f69 super-large and f72/f75 large-order transaction-size estimates; not ETF creations/redemptions and not disclosed institutional holdings",
         "records": records,
     }
     output_dir.mkdir(parents=True, exist_ok=True)

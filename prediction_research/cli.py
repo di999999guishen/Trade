@@ -16,6 +16,7 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("doctor", help="inspect data coverage without changing source data")
     commands.add_parser("status", help="show the end-to-end workflow checkpoint")
     commands.add_parser("report", help="build a consolidated auditable research report")
+    commands.add_parser("backtest-flow", help="reconstruct historical ETF screens with paired cohort baselines")
     integrate = commands.add_parser("integrate-etfs", help="run ETF evidence stages with per-stage Markdown")
     integrate.add_argument("--universe", help="configured ETF experiment universe")
     commands.add_parser("evidence-status", help="show ETF evidence and deferred external modules")
@@ -77,6 +78,12 @@ def main(argv: list[str] | None = None) -> int:
             result = {key: payload[key] for key in ("outcome", "summary_path", "scope")}
             result["stages"] = [{key: row[key] for key in ("stage", "name", "status", "markdown_path")}
                                 for row in payload["stages"]]
+        elif args.command == "backtest-flow":
+            from .flow_backtest import run_flow_backtest
+
+            path, payload = run_flow_backtest(cfg)
+            result = {"result_path": str(path.resolve()), **{key: value for key, value in payload.items()
+                       if key not in {"cohorts", "price_snapshots"}}}
         elif args.command == "evidence-status":
             from .evidence import evidence_status
 
@@ -189,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = settle_predictions(cfg)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        if args.command == "integrate-etfs" and result["outcome"] == "partial_failure":
+        if args.command in {"integrate-etfs", "cycle"} and result["outcome"] == "partial_failure":
             return 2
         return 0
     except Exception as exc:

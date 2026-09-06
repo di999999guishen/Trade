@@ -46,6 +46,25 @@ CREATE TABLE IF NOT EXISTS predictions (
   actual_up INTEGER,
   UNIQUE(symbol, feature_date, horizon, model_version)
 );
+CREATE TABLE IF NOT EXISTS prediction_payloads (
+  prediction_id TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS screen_rule_versions (
+  rule_hash TEXT PRIMARY KEY,
+  first_seen_at_utc TEXT NOT NULL,
+  rules_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS screen_batches (
+  feature_date TEXT NOT NULL,
+  rule_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY(feature_date, rule_hash)
+);
+CREATE TABLE IF NOT EXISTS screen_selection_times (
+  selection_id TEXT PRIMARY KEY,
+  decision_at_utc TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS runs (
   run_id TEXT PRIMARY KEY,
   run_type TEXT NOT NULL,
@@ -121,6 +140,10 @@ CREATE TABLE IF NOT EXISTS etf_flow_snapshots (
   market_cap REAL,
   main_net_inflow REAL,
   main_net_inflow_pct REAL,
+  super_large_net_inflow REAL,
+  super_large_net_inflow_pct REAL,
+  large_net_inflow REAL,
+  large_net_inflow_pct REAL,
   PRIMARY KEY(snapshot_sha256, symbol)
 );
 CREATE TABLE IF NOT EXISTS screen_selections (
@@ -139,12 +162,6 @@ CREATE TABLE IF NOT EXISTS screen_selections (
   settled_at_utc TEXT,
   UNIQUE(snapshot_sha256, rule_hash, symbol, horizon)
 );
-DELETE FROM screen_selections
-WHERE rowid NOT IN (
-  SELECT MAX(rowid)
-  FROM screen_selections
-  GROUP BY feature_date, rule_hash, symbol, horizon
-);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_screen_selection_daily
 ON screen_selections(feature_date, rule_hash, symbol, horizon);
 UPDATE predictions
@@ -160,12 +177,18 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(path)
     try:
         connection.executescript(SCHEMA)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(etf_flow_snapshots)")}
+        for name in ("super_large_net_inflow", "super_large_net_inflow_pct",
+                     "large_net_inflow", "large_net_inflow_pct"):
+            if name not in columns:
+                connection.execute(f"ALTER TABLE etf_flow_snapshots ADD COLUMN {name} REAL")
+        connection.commit()
         yield connection
     finally:
         connection.close()
 
 
-def insert_prediction(connection: sqlite3.Connection, payload: dict) -> tuple[str, bool]:
+def insert_prediction(connection: sqlite3.Connection, payload: dict, commit: bool = True) -> tuple[str, bool]:
     prediction_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -183,7 +206,8 @@ def insert_prediction(connection: sqlite3.Connection, payload: dict) -> tuple[st
                 json.dumps(payload.get("evidence", []), ensure_ascii=False, sort_keys=True), now,
             ),
         )
-        connection.commit()
+        if commit:
+            connection.commit()
         return prediction_id, True
     except sqlite3.IntegrityError:
         row = connection.execute(
@@ -202,6 +226,37 @@ def record_run(connection: sqlite3.Connection, run_type: str, cfg: dict, result_
     )
     connection.commit()
     return run_id
+
+
+def frozen_prediction(connection: sqlite3.Connection, payload: dict) -> dict:
+    prediction_id, inserted = insert_prediction(connection, payload, commit=False)
+    if inserted:
+        frozen = {**payload, "prediction_id": prediction_id,
+                  "frozen_at_utc": datetime.now(timezone.utc).isoformat(), "freeze_schema_version": 2}
+        connection.execute("INSERT INTO prediction_payloads VALUES (?, ?)",
+                           (prediction_id, json.dumps(frozen, ensure_ascii=False, sort_keys=True, allow_nan=False)))
+        connection.commit()
+    else:
+        frozen = load_frozen_prediction(connection, prediction_id)
+        # The failed UNIQUE insert opened a write transaction.  End it before
+        # the next asset opens a separate read connection for flow context.
+        connection.rollback()
+    return {**frozen, "inserted": inserted}
+
+
+def load_frozen_prediction(connection: sqlite3.Connection, prediction_id: str) -> dict:
+    record = connection.execute("SELECT payload_json FROM prediction_payloads WHERE prediction_id=?", (prediction_id,)).fetchone()
+    if record:
+        return json.loads(record[0])
+    row = connection.execute("SELECT symbol,feature_date,horizon,probability_up,probability_status,model_version,"
+                             "data_snapshot_json,evidence_json,created_at_utc FROM predictions WHERE prediction_id=?",
+                             (prediction_id,)).fetchone()
+    if row is None:
+        raise ValueError("referenced frozen prediction does not exist")
+    frozen = dict(zip(("symbol", "feature_date", "horizon", "probability_up", "probability_status", "model_version"), row[:6]))
+    frozen.update(prediction_id=prediction_id, data_snapshot=json.loads(row[6]), evidence=json.loads(row[7]),
+                  frozen_at_utc=row[8], freeze_schema_version=1, legacy_time_status="decision_time_not_recorded")
+    return frozen
 
 
 def upsert_event(connection: sqlite3.Connection, event: dict, occurrence: dict) -> tuple[str, bool]:

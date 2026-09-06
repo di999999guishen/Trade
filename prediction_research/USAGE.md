@@ -49,7 +49,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 1. 更新全市场 ETF 行情和资金流快照；
 2. 更新新闻事件；
 3. 运行资金流粗筛并冻结前 20 名；
-4. 获取排名前 3 的候选 ETF 日线；
+4. 获取排名前 3 的候选和所有历史未结算标的日线；
 5. 分别运行 5 日和 20 日回测；
 6. 冻结最新概率预测；
 7. 执行 TradingAgents（当前按配置跳过）；
@@ -130,15 +130,18 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 当前粗筛公式：
 
 ```text
-粗筛分 =
+粗筛分 = Σ(可用因子权重 × 因子值) / Σ(可用因子权重)
+
+因子包括：
 0.50 × 截断后的主力净流入占比
 + 0.35 × 对数成交额流动性
 + 0.15 × 截断后的当日涨跌动量
++ 0.15 × 超大单与大单背离
 ```
 
 系统同时应用资产类别、最低成交额、最低市值、有效价格和同主题数量限制。
 
-资金流字段是按成交单大小估算的交易资金流，不等于 ETF 申购赎回、份额变化或机构账户披露。
+资金流字段是按成交单大小估算的交易资金流，不等于 ETF 申购赎回、份额变化或机构账户披露。背离分项缺失时从权重分母排除，不按 0 处理；详细定义见 [ETF_ORDER_DIVERGENCE.md](docs/ETF_ORDER_DIVERGENCE.md)。
 
 ### 5.5 获取粗筛候选历史行情
 
@@ -222,7 +225,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 - 质量门状态；
 - 预期到期时间。
 
-相同标的、特征日、周期和模型版本重复运行时不会重复插入。
+相同标的、特征日、周期和模型版本重复运行时不会重复插入，并返回原始冻结概率、证据和决策时间，不拼接本轮新信息。cycle 显式记录实际决策时间；新记录结算从该时刻之后的首个交易日开盘开始。独立历史预测默认使用特征日配置的截止时间。
 
 ### 6.3 结算到期预测
 
@@ -238,9 +241,17 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 & $py -m prediction_research.cli settle-screen
 ```
 
-粗筛前 20 名会分别建立 5 日和 20 日前瞻记录。同一特征日、筛选规则、ETF 和周期只保留最新一条，避免同日重复运行造成样本重复。
+粗筛前 20 名会分别建立 5 日和 20 日前瞻记录。同一特征日、筛选规则的首次批次冻结后不再覆盖，重复运行引用原始截面和排名。
 
-至少积累 60 个独立资金流观察日后，才将完整资金流轮动策略标记为具备历史验证条件。
+### 6.5 历史资金流筛选研究
+
+```powershell
+& $py -m prediction_research.cli backtest-flow
+```
+
+重建历史可得截面，比较资金流候选、相同流动性条件下等权池和动量候选，并进行历史筛选后的滚动样本外概率比较。每个周期至少 60 个合格成对观察日，同时要求历史行情、到期标签和样本外预测齐全；仅累计到 60 日不等于就绪。缺行情清单写入 `missing_histories`，普通 cycle 不自动下载全市场上千份历史。
+
+收益采用扣除配置往返成本的独立等权周期组合；周期可能重叠，不是连续组合净值。
 
 ## 7. TradingAgents
 
@@ -277,7 +288,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 - 粗筛前 20 名；
 - 5/20 日回测指标；
 - 当前冻结预测；
-- 与候选直接映射的事件证据；
+- 本轮标准证据整合及事件传播链明细引用；
 - 等待结算和下一检查点。
 
 ## 9. 输出目录
@@ -338,3 +349,12 @@ ETF 分阶段整合入口为 `integrate-etfs`，已接入 `cycle`、`status` 和
 具体命令、外部标准文件格式与实验边界见 [ETF_EVIDENCE_USAGE.md](docs/ETF_EVIDENCE_USAGE.md)，
 阶段验收与实际完成情况见 [ETF_INTEGRATION_PHASES.md](docs/ETF_INTEGRATION_PHASES.md)。
 A 股个股及 TradingAgents-Astock 按用户要求延期。
+
+## cycle 六项修订（2026-09-06）
+
+详细阶段方案和验收记录见 [ETF_CYCLE_REMEDIATION_PLAN.md](docs/ETF_CYCLE_REMEDIATION_PLAN.md)。
+每日运行、状态判读、资金流检查和异常处理见 [ETF_DAILY_MONITORING.md](docs/ETF_DAILY_MONITORING.md)。
+
+主报告绑定同一轮 cycle 的筛选、预测和回测，不混用全局最近结果。每只预测 ETF 展示资金净流入金额、占比、观察/可得/决策时间、粗筛贡献、价流方向和 5/20 个观察日累计；不足窗口显示数据不足。资金流目前参与粗筛，不直接进入上涨概率。
+
+`status.latest_cycle` 展示执行结果、数据模式、数据就绪和模型验证。`complete_with_data_waits` 表示工程执行完毕但仍有数据等待；`partial_failure` 表示本轮有失败或阻断，CLI 返回 2。抓取或筛选失败不会读取旧候选继续生成本轮预测。`--skip-fetch` 仅为缓存验证，不代表已联网更新。

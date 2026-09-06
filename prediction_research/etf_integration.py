@@ -9,6 +9,7 @@ from .config import resolve_project_path
 from .etf_evidence import chain_report, etf_profiles, sync_etf_evidence, sync_existing_agents, sync_news_chains
 from .evidence import etf_assets, evidence_status, import_evidence, now_utc
 from .evidence_experiments import run_evidence_experiments
+from .data import load_universe
 from .store import connect, record_run
 
 
@@ -40,11 +41,11 @@ def _stage_markdown(row: dict) -> str:
                       f"映射首次可得：{result['storage']['mapping_available_at_utc']}。", "",
                       "链条用于相关性解释，价格影响方向未验证；完整节点、来源和快照见 JSON。"])
     elif number == 5 and result:
-        lines.extend(["| 周期 | 基线样本 | 量价 v2 Brier | 历史概率 Brier | 实验状态 |",
+        lines.extend(["| ETF 池 / 周期 | 基线样本 | 量价 v2 Brier | 历史概率 Brier | 实验状态 |",
                       "|---|---:|---:|---:|---|"])
         for item in result["items"]:
             metric = item["baseline_metrics"]
-            lines.append(f"| {item['horizon']}日 | {metric['rows']} | {metric.get('brier', '无数据')} | {metric.get('historical_rate_brier', '无数据')} | {item['status']} |")
+            lines.append(f"| {item.get('universe', '')} / {item['horizon']}日 | {metric['rows']} | {metric.get('brier', '无数据')} | {metric.get('historical_rate_brier', '无数据')} | {item['status']} |")
         lines.extend(["", "缺乏真实历史覆盖的模块等待积累；不能把测试用合成数据当作真实增益。", ""])
         for item in result["items"]:
             for source, readiness in item["readiness"].items():
@@ -124,10 +125,19 @@ def run_etf_integration(cfg: dict, universe: str | None = None) -> dict:
 
     def experiments():
         items = []
-        for horizon in cfg["horizons"]:
-            path, payload = run_evidence_experiments(cfg, universe, horizon)
-            items.append({"horizon": horizon, "path": str(path.resolve()), "status": payload["status"],
-                          "baseline_metrics": payload["baseline_metrics"], "readiness": payload["readiness"]})
+        universes = [universe]
+        if cfg.get("universes", {}).get("screened_current") and universe != "screened_current":
+            universes.append("screened_current")
+        for pool in universes:
+            for horizon in cfg["horizons"]:
+                _, snapshots = load_universe(cfg, pool)
+                if len(snapshots) >= 2:
+                    path, payload = run_evidence_experiments(cfg, pool, horizon)
+                    items.append({"universe": pool, "horizon": horizon, "path": str(path.resolve()), "status": payload["status"],
+                                  "baseline_metrics": payload["baseline_metrics"], "readiness": payload["readiness"]})
+                else:
+                    items.append({"universe": pool, "horizon": horizon, "status": "waiting_for_histories_or_valid_inputs",
+                                  "baseline_metrics": {"rows": 0}, "readiness": {}})
         return {"items": items, "stage_status": "waiting_for_evidence_or_history"
                 if any(item["status"] != "evaluated" for item in items) else "complete"}
 
