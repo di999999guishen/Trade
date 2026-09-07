@@ -20,17 +20,19 @@
 
 ```powershell
 Set-Location 'E:\Trade\TradingAgents'
-.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 3
+.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 5
 .\.venv\Scripts\python.exe -m prediction_research.cli status
 ```
 
 正常日常运行不要使用 `--skip-fetch`。该参数只用于断网调试、代码验收和冻结结果复现：
 
 ```powershell
-.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 3 --skip-fetch
+.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 5 --skip-fetch
 ```
 
 完整 cycle 自动执行快照、新闻、筛选、待跟踪行情、证据整合、历史资金流研究、5/20 日回测与预测、结算和报告，不需要逐阶段手工触发。
+
+粗筛仍冻结前 20 名，默认只有前 5 名进入深度历史更新、5/20 日模型回测和预测。cycle JSON 的 `requested_prediction_top_n` 与 `prediction_candidate_count` 用于确认计划数和实际数。
 
 ## 3. 每天先看哪些状态
 
@@ -73,6 +75,13 @@ Set-Location 'E:\Trade\TradingAgents'
 - `missing_flow_values`：金额或占比缺失，不按 0 处理；
 - `used_for_probability=false`：当前资金流只影响候选筛选，不应解释成概率模型输入；
 - 5/20 日窗口显示“数据不足”是正常等待，不允许补零或用不足窗口冒充完整累计。
+
+资金流分级同时展示两个时间层级：
+
+- 单日：使用本轮截面的主力净流入金额和占比；
+- 5 日：使用最近 5 个实际观察日的累计净流入除以累计成交额，必须覆盖完整 5 日；
+- 等级阈值按绝对净流入比划分为 `neutral`（小于 3%）、`mild`（3%）、`strong`（10%）和 `extreme`（20%），并附加 `inflow/outflow` 方向；
+- 5 日历史不足或成交额缺失时为 `insufficient_data`，不会退化为单日等级。
 
 当前资金流是基于成交单大小的估算，不代表 ETF 份额申赎、机构账户或已识别的“聪明钱”主体。
 

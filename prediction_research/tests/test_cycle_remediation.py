@@ -86,6 +86,8 @@ def test_snapshot_availability_boundary_and_flow_window_missing(cfg):
     assert on_time["status"] == "available" and on_time["main_net_inflow"] == 10000000
     assert on_time["history_windows"]["5"]["net_inflow_sum"] is None
     assert on_time["history_windows"]["5"]["observed_days"] == 1
+    assert on_time["flow_periods"]["single_day"]["grade"] == "strong_inflow"
+    assert on_time["flow_periods"]["five_observation_days"]["grade"] == "insufficient_data"
     assert on_time["used_for_probability"] is False
 
 
@@ -155,6 +157,30 @@ def test_flow_observation_window_deduplicates_same_day(cfg):
     result = flow_context(cfg, "518880", None, utc("2024-08-15T00:00:00Z"))
     assert result["history_windows"]["5"]["net_inflow_sum"] == 600
     assert result["history_windows"]["20"]["net_inflow_sum"] is None
+
+
+def test_single_and_five_day_flow_grades(cfg):
+    manifest = None
+    latest = None
+    for idx in range(5):
+        stamp = utc("2024-08-10T09:00:00Z") + timedelta(days=idx)
+        latest = flow_row(net=20_000_000, pct=20, epoch=int(stamp.timestamp()))
+        manifest = snapshot(cfg, [latest], (stamp + timedelta(minutes=10)).isoformat(), f"{idx + 10:064x}")
+    result = flow_context(cfg, "518880", {"source_snapshot": manifest, "selected": [latest]}, utc("2024-08-15T00:00:00Z"))
+    assert result["flow_periods"]["single_day"]["grade"] == "extreme_inflow"
+    five = result["flow_periods"]["five_observation_days"]
+    assert five["grade"] == "extreme_inflow"
+    assert five["direction"] == "inflow" and five["observed_days"] == 5
+    assert five["net_inflow_sum"] == 100_000_000
+    assert five["net_inflow_ratio_pct"] == pytest.approx(20.0)
+
+
+def test_cycle_and_agent_defaults_use_top_five():
+    from prediction_research.cli import parser
+
+    assert parser().parse_args(["cycle"]).top == 5
+    assert parser().parse_args(["agents-plan"]).top == 5
+    assert parser().parse_args(["run-agents"]).top == 5
 
 
 def test_actual_decision_uses_later_open(cfg):
@@ -231,6 +257,7 @@ def test_report_uses_only_this_runs_ids_and_renders_more_than_six(cfg, tmp_path)
     assert all(row["prediction_id"] in text for row in rows)
     assert unrelated["prediction_id"] not in text
     assert "数据不足" in text and "参与概率计算：否" in text
+    assert "单日资金等级" in text and "5日资金等级" in text
 
 
 def test_cycle_failure_does_not_read_old_screen_and_still_reports(cfg, monkeypatch):

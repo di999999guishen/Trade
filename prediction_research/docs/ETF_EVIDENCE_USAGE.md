@@ -17,9 +17,9 @@
 
 ```powershell
 # 用现有快照验收完整流程，不请求网络/大模型
-.\.venv\Scripts\python.exe -m prediction_research.cli cycle --skip-fetch --top 3
+.\.venv\Scripts\python.exe -m prediction_research.cli cycle --skip-fetch --top 5
 # 正常更新并继续各阶段
-.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 3
+.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 5
 ```
 
 新预测只引用截至特征日 `data_cutoff` 当时已可得的证据 ID。旧的冻结预测不回填证据；标准证据不参与原量价概率计算。原 TradingAgents 按既有配置继续跳过。

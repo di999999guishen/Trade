@@ -59,7 +59,8 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
     lines = ["# ETF cycle 预测与资金流报告", "",
              f"生成：{datetime.now(timezone.utc).isoformat()}", "",
              f"本轮：`{context.get('cycle_id', context.get('started_at_utc'))}`；结果：`{context.get('outcome', 'running')}`。",
-             f"数据模式：`{context.get('data_mode', 'legacy_not_recorded')}`；决策时间：{context.get('decision_at_utc', '旧版本未记录')}。", "",
+             f"数据模式：`{context.get('data_mode', 'legacy_not_recorded')}`；决策时间：{context.get('decision_at_utc', '旧版本未记录')}。",
+             f"深度预测范围：粗筛前 {context.get('requested_prediction_top_n', '旧版本未记录')} 名；本轮实际候选 {context.get('prediction_candidate_count', len(context.get('candidate_symbols', [])))} 只。", "",
              "## 执行与等待", "", "| 步骤 | 状态 |", "|---|---|"]
     lines.extend(f"| {_cell(step['name'])} | {_cell(step['status'])} |" for step in context.get("steps", []))
     if context.get("data_readiness"):
@@ -96,9 +97,10 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
                 lines.append("| no_data | — | 当前截面没有可确认的背离分项 | — | — | — | — |")
         except (OSError, ValueError, KeyError):
             lines.extend(["", "金额排行：原始截面不可读，未使用其他运行替代。"])
-    lines.extend(["", "## 本轮引用的冻结预测", "", "| ETF | 行情日 | 周期 | 上涨概率 | 质量状态 | 冻结时间 |", "|---|---|---:|---:|---|---|"])
+    lines.extend(["", "## 本轮引用的冻结预测", "", "| ETF | 行情日 | 周期 | 上涨概率 | 单日资金等级 | 5日资金等级 | 质量状态 | 冻结时间 |", "|---|---|---:|---:|---|---|---|---|"])
     for row in predictions:
-        lines.append(f"| {row['symbol']} | {row['feature_date']} | {row['horizon']}日 | {row['probability_up']:.2%} | {row['probability_status']} | {row['frozen_at_utc']} |")
+        periods = row.get("fund_flow", {}).get("flow_periods", {})
+        lines.append(f"| {row['symbol']} | {row['feature_date']} | {row['horizon']}日 | {row['probability_up']:.2%} | {_cell(periods.get('single_day', {}).get('grade', 'legacy_not_recorded'))} | {_cell(periods.get('five_observation_days', {}).get('grade', 'legacy_not_recorded'))} | {row['probability_status']} | {row['frozen_at_utc']} |")
     if not predictions:
         lines.extend(["", "本轮没有可引用的冻结预测；未展示其他运行的预测补位。"])
     lines.extend(["", "## 每只 ETF 预测内的资金流依据", ""])
@@ -107,16 +109,20 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
         if not flow:
             old = next((e for e in row.get("evidence", []) if e.get("type") == "money_flow_coarse_screen"), {})
             flow = {**old, "status": "legacy_time_not_verified", "used_for_probability": False}
+        periods = flow.get("flow_periods", {})
+        single = periods.get("single_day", {})
+        five = periods.get("five_observation_days", {})
         lines.extend([f"### {row['symbol']} · {row['horizon']} 日 · {_cell(row.get('name', row['symbol']))}", "",
                       f"预测 ID：`{row['prediction_id']}`；决策时间：{row.get('decision_at_utc', '旧记录未提供')}。",
                       f"可用状态：`{flow.get('status', 'no_data')}`；净流入 {_amount(flow.get('main_net_inflow'))}；占比 {_pct(flow.get('main_net_inflow_pct'))}。",
                       f"观察时间：{flow.get('observed_at_utc', '未记录')}；首次可得：{flow.get('available_at_utc', '未记录')}。",
                       f"资金与价格方向：`{flow.get('price_flow_alignment', 'unknown')}`；资金流对粗筛总分贡献：{flow.get('screen_flow_contribution', '未记录')}。",
                       f"超大单/大单背离：`{flow.get('order_divergence', {}).get('signal', 'no_data')}`；因子 {flow.get('order_divergence', {}).get('factor', '数据不足')}；对粗筛总分贡献：{flow.get('screen_order_divergence_contribution', '数据不足')}。",
+                      f"单日资金：`{single.get('grade', '数据不足')}` / `{single.get('direction', 'unknown')}`；净额 {_amount(single.get('net_inflow'))}；净流入比 {_pct(single.get('net_inflow_ratio_pct'))}。",
+                      f"5日资金：`{five.get('grade', '数据不足')}` / `{five.get('direction', 'unknown')}`；累计净额 {_amount(five.get('net_inflow_sum'))}；累计净流入比 {_pct(five.get('net_inflow_ratio_pct'))}；覆盖 {five.get('observed_days', 0)}/5 个观察日（流入 {five.get('inflow_days', 0)}、流出 {five.get('outflow_days', 0)}）。",
                       "参与概率计算：否。金额与占比不是上涨概率。", ""])
-        for size in (5, 20):
-            window = flow.get("history_windows", {}).get(str(size), {})
-            lines.append(f"- {size} 个观察日累计：{_amount(window.get('net_inflow_sum'))}；已覆盖 {window.get('observed_days', 0)} 日。")
+        window = flow.get("history_windows", {}).get("20", {})
+        lines.append(f"- 20 个观察日参考：{_amount(window.get('net_inflow_sum'))}；已覆盖 {window.get('observed_days', 0)} 日。")
         lines.extend(["", "窗口按已观测日期计数，不保证交易日连续；不足窗口或有缺值时不补零。", ""])
     lines.extend(["## 本轮模型验证", "", "| 周期 | 样本 | Brier | 历史概率 Brier | 发布门 |", "|---|---:|---:|---:|---|"])
     gate = cfg["model"].get("validation_gate", {})

@@ -29,12 +29,12 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 & $py -m prediction_research.cli ingest-etfs
 & $py -m prediction_research.cli etf-summary
 & $py -m prediction_research.cli screen-etfs --limit 20
-& $py -m prediction_research.cli fetch-screened --top 3
-& $py -m prediction_research.cli agents-plan --top 3
-& $py -m prediction_research.cli run-agents --top 3
+& $py -m prediction_research.cli fetch-screened --top 5
+& $py -m prediction_research.cli agents-plan --top 5
+& $py -m prediction_research.cli run-agents --top 5
 & $py -m prediction_research.cli settle-agents
 & $py -m prediction_research.cli settle-screen
-& $py -m prediction_research.cli cycle --top 3
+& $py -m prediction_research.cli cycle --top 5
 & $py -m prediction_research.cli events --limit 10
 & $py -m prediction_research.cli backtest --universe commodity --horizon 5 --feature-set external
 & $py -m prediction_research.cli predict --universe commodity --horizon 5 --feature-set external

@@ -15,7 +15,7 @@ from .store import connect, frozen_prediction, record_run
 BASE_MODEL_VERSION = "price-volume-logistic-v2"
 EXTERNAL_MODEL_VERSION = "commodity-external-logistic-v1"
 EXPOSURE_MODEL_VERSION = "commodity-exposure-logistic-v1"
-SCREENED_MODEL_VERSION = "screened-flow-price-logistic-v3"
+SCREENED_MODEL_VERSION = "screened-flow-price-logistic-v4"
 
 
 def _run_path(cfg: dict, prefix: str) -> Path:

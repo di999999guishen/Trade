@@ -45,6 +45,7 @@
   "workflow": {
     "max_quote_age_days": 4,
     "flow_round_trip_cost_bps": 10,
+    "flow_grade_thresholds_pct": {"mild": 3.0, "strong": 10.0, "extreme": 20.0},
     "skip_tradingagents": true,
     "skip_reason": "user_requested_skip_authentication_blocker"
   },

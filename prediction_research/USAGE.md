@@ -41,7 +41,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 ### 3.1 执行完整日常周期
 
 ```powershell
-& $py -m prediction_research.cli cycle --top 3
+& $py -m prediction_research.cli cycle --top 5
 ```
 
 该命令依次执行：
@@ -49,7 +49,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 1. 更新全市场 ETF 行情和资金流快照；
 2. 更新新闻事件；
 3. 运行资金流粗筛并冻结前 20 名；
-4. 获取排名前 3 的候选和所有历史未结算标的日线；
+4. 获取排名前 5 的候选和所有历史未结算标的日线；
 5. 分别运行 5 日和 20 日回测；
 6. 冻结最新概率预测；
 7. 执行 TradingAgents（当前按配置跳过）；
@@ -61,7 +61,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 ### 3.2 使用已有快照离线复跑
 
 ```powershell
-& $py -m prediction_research.cli cycle --top 3 --skip-fetch
+& $py -m prediction_research.cli cycle --top 5 --skip-fetch
 ```
 
 该方式不会联网更新 ETF、新闻和候选历史数据，适合代码验收、调试和复现已有结果。
@@ -146,7 +146,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 ### 5.5 获取粗筛候选历史行情
 
 ```powershell
-& $py -m prediction_research.cli fetch-screened --top 3
+& $py -m prediction_research.cli fetch-screened --top 5
 ```
 
 系统优先使用东方财富，失败时降级到新浪行情，并记录实际数据源和失败原因。
@@ -258,13 +258,13 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 查看将要提交的候选，不调用大模型：
 
 ```powershell
-& $py -m prediction_research.cli agents-plan --top 3
+& $py -m prediction_research.cli agents-plan --top 5
 ```
 
 实际执行：
 
 ```powershell
-& $py -m prediction_research.cli run-agents --top 3
+& $py -m prediction_research.cli run-agents --top 5
 ```
 
 结算成功产生的方向判断：
@@ -322,14 +322,14 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 ```powershell
 Set-Location 'E:\Trade\TradingAgents'
 $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe'
-& $py -m prediction_research.cli cycle --top 3
+& $py -m prediction_research.cli cycle --top 5
 & $py -m prediction_research.cli status
 ```
 
 如果网络不可用，可以先复用冻结数据验证流程：
 
 ```powershell
-& $py -m prediction_research.cli cycle --top 3 --skip-fetch
+& $py -m prediction_research.cli cycle --top 5 --skip-fetch
 ```
 
 同一交易日重复运行不会增加独立资金流观察日，也不会重复冻结同版本预测。要验证资金流轮动效果，需要持续积累不同交易日的数据。
@@ -356,5 +356,7 @@ A 股个股及 TradingAgents-Astock 按用户要求延期。
 每日运行、状态判读、资金流检查和异常处理见 [ETF_DAILY_MONITORING.md](docs/ETF_DAILY_MONITORING.md)。
 
 主报告绑定同一轮 cycle 的筛选、预测和回测，不混用全局最近结果。每只预测 ETF 展示资金净流入金额、占比、观察/可得/决策时间、粗筛贡献、价流方向和 5/20 个观察日累计；不足窗口显示数据不足。资金流目前参与粗筛，不直接进入上涨概率。
+
+默认深度预测范围为粗筛前 5 名。资金流同时按单日和最近 5 个实际观察日分级；5 日等级要求窗口完整并使用累计净流入/累计成交额计算，覆盖不足时显示 `insufficient_data`。
 
 `status.latest_cycle` 展示执行结果、数据模式、数据就绪和模型验证。`complete_with_data_waits` 表示工程执行完毕但仍有数据等待；`partial_failure` 表示本轮有失败或阻断，CLI 返回 2。抓取或筛选失败不会读取旧候选继续生成本轮预测。`--skip-fetch` 仅为缓存验证，不代表已联网更新。

@@ -42,7 +42,7 @@ def candidate_history_status(cfg: dict, candidates: list[dict], decision: str) -
     return {"status": "waiting_for_history" if issues else "ready", "issues": issues, "last_dates": dates}
 
 
-def run_cycle(cfg: dict, top_n: int = 3, skip_fetch: bool = False) -> dict:
+def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
     if top_n < 1:
         raise ValueError("top must be positive")
     cfg = copy.deepcopy(cfg)
@@ -51,7 +51,8 @@ def run_cycle(cfg: dict, top_n: int = 3, skip_fetch: bool = False) -> dict:
     path = runs / f"cycle_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
     report = {"run_type": "end_to_end_research_cycle", "cycle_id": uuid.uuid4().hex,
               "started_at_utc": now_utc(), "data_mode": "cached_validation" if skip_fetch else "network_refresh",
-              "steps": [], "artifacts": {}, "outcome": "running", "result_path": str(path.resolve())}
+              "requested_prediction_top_n": top_n, "steps": [], "artifacts": {}, "outcome": "running",
+              "result_path": str(path.resolve())}
 
     def persist():
         temporary = path.with_suffix(".tmp")
@@ -112,6 +113,7 @@ def run_cycle(cfg: dict, top_n: int = 3, skip_fetch: bool = False) -> dict:
         for row in candidates
     ]
     report["candidate_symbols"] = [row["symbol"] for row in candidates]
+    report["prediction_candidate_count"] = len(candidates)
     tracked = step("pending_history_assets", lambda: {"assets": pending_history_assets(cfg, candidates)})
     history_fetch = None
     if not skip_fetch and tracked:
