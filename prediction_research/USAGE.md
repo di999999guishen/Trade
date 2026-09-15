@@ -1,5 +1,7 @@
 # ETF 信息获取与预测研究系统使用手册
 
+2026-09-15 最新实现与验收以 [整改实施手册](docs/ETF_REMEDIATION_20260915.md) 为准。每日cycle新增自动归档，操作及恢复见 [归档指南](docs/ETF_ARCHIVE_GUIDE.md)。
+
 ## 1. 项目用途
 
 本模块用于在 TradingAgents 仓库中构建可审计的 ETF 研究流程：
@@ -41,7 +43,7 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 ### 3.1 执行完整日常周期
 
 ```powershell
-& $py -m prediction_research.cli cycle --top 5
+& $py -m prediction_research.cli cycle
 ```
 
 该命令依次执行：
@@ -49,12 +51,13 @@ $py = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python
 1. 更新全市场 ETF 行情和资金流快照；
 2. 更新新闻事件；
 3. 运行资金流粗筛并冻结前 20 名；
-4. 获取排名前 5 的候选和所有历史未结算标的日线；
+4. 按配置获取前20个候选和所有历史未结算标的日线，明确排除数据不合格者；
 5. 分别运行 5 日和 20 日回测；
 6. 冻结最新概率预测；
 7. 执行 TradingAgents（当前按配置跳过）；
 8. 检查预测、智能体结论和粗筛记录是否到期；
-9. 生成综合研究报告和周期运行记录。
+9. 生成综合研究报告和周期运行记录；
+10. 保存本轮文件、输入与数据库归档，校验完整性并记录备份状态。
 
 `--top` 控制进入深度预测流程的候选数量，不改变粗筛报告默认保存的前 20 名。
 
@@ -357,6 +360,6 @@ A 股个股及 TradingAgents-Astock 按用户要求延期。
 
 主报告绑定同一轮 cycle 的筛选、预测和回测，不混用全局最近结果。每只预测 ETF 展示资金净流入金额、占比、观察/可得/决策时间、粗筛贡献、价流方向和 5/20 个观察日累计；不足窗口显示数据不足。资金流目前参与粗筛，不直接进入上涨概率。
 
-默认深度预测范围为粗筛前 5 名。资金流同时按单日和最近 5 个实际观察日分级；5 日等级要求窗口完整并使用累计净流入/累计成交额计算，覆盖不足时显示 `insufficient_data`。
+默认量化预测申请范围为粗筛前20名，实际按历史数据和训练就绪情况处理，`--top 5`可显式限制。LLM候选预算独立，且当前配置继续跳过。资金流同时按单日和最近5个实际观察日分级；窗口不足显示 `insufficient_data`。
 
 `status.latest_cycle` 展示执行结果、数据模式、数据就绪和模型验证。`complete_with_data_waits` 表示工程执行完毕但仍有数据等待；`partial_failure` 表示本轮有失败或阻断，CLI 返回 2。抓取或筛选失败不会读取旧候选继续生成本轮预测。`--skip-fetch` 仅为缓存验证，不代表已联网更新。

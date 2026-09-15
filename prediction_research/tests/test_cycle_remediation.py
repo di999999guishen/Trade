@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,10 +33,10 @@ def flow_row(symbol="518880", net=10000000.0, pct=10.0, epoch=None):
 def snapshot(cfg, rows=None, received="2024-08-17T09:10:00Z", sha="a" * 64):
     directory = Path(cfg["_project_dir"]) / cfg["etf_market"]["snapshot_dir"]
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"snapshot_{sha}.json"
+    path = directory / f"etf_snapshot_{sha}.json"
     rows = rows if rows is not None else [flow_row(), flow_row("159934", -10000000, -10)]
-    path.write_text(json.dumps({"records": rows, "flow_definition": "synthetic test only"}), encoding="utf-8")
-    manifest = {"path": str(path), "sha256": sha, "retrieved_at_utc": received, "records": len(rows)}
+    path.write_text(json.dumps({"records": rows, "flow_definition": "synthetic test only", "fixture_id": sha}), encoding="utf-8")
+    manifest = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "retrieved_at_utc": received, "records": len(rows)}
     (directory / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
     ingest_etf_snapshot(cfg, manifest)
     cfg["etf_market"]["screen"]["max_per_group"] = 2
@@ -145,7 +146,7 @@ def test_future_screen_rejected_and_same_day_selection_immutable(cfg):
     _, second = screen_etfs(cfg, decision_at_utc="2024-08-17T13:00:00Z")
     assert first["selected"] == second["selected"]
     assert second["reused_frozen_screen"]
-    assert second["source_snapshot"]["sha256"] == "a" * 64
+    assert second["source_snapshot"]["sha256"] == first["source_snapshot"]["sha256"]
 
 
 def test_flow_observation_window_deduplicates_same_day(cfg):
@@ -175,10 +176,10 @@ def test_single_and_five_day_flow_grades(cfg):
     assert five["net_inflow_ratio_pct"] == pytest.approx(20.0)
 
 
-def test_cycle_and_agent_defaults_use_top_five():
+def test_cycle_uses_configured_coverage_and_agents_keep_top_five():
     from prediction_research.cli import parser
 
-    assert parser().parse_args(["cycle"]).top == 5
+    assert parser().parse_args(["cycle"]).top is None
     assert parser().parse_args(["agents-plan"]).top == 5
     assert parser().parse_args(["run-agents"]).top == 5
 
@@ -282,7 +283,7 @@ def test_cached_cycle_returns_waiting_and_does_not_mutate_config(cfg, monkeypatc
     snapshot(cfg)
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
     result = run_cycle(cfg, 2, True)
-    assert result["outcome"] == "complete_with_data_waits"
+    assert result["outcome"] == "complete_with_data_waits", result.get("archive")
     assert len(result["prediction_ids"]) == 2
     assert "screened_current" not in cfg["universes"]
     report = Path(result["artifacts"]["report"]).read_text(encoding="utf-8")

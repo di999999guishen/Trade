@@ -10,6 +10,7 @@ from .flow_context import FLOW_BASIS, finite
 from .screening import _snapshot_path
 from .store import connect, load_frozen_prediction
 from .order_divergence import order_divergence
+from .opportunity import ASSET_LABELS, CATEGORY_LABELS
 
 
 def _read(path):
@@ -27,6 +28,59 @@ def _amount(value):
 
 def _pct(value):
     return "数据不足" if finite(value) is None else f"{value:.2f}%"
+
+
+def _observation_lines(observation: dict, selected: list[dict], prediction_symbols: set[str], heading: str) -> list[str]:
+    coverage = observation["coverage"]
+    lines = ["", f"## {heading}", "",
+             f"观察时点：{observation['decision_at_utc']}；独立截面：`{observation['source_snapshot'].get('sha256')}`。",
+             "以下是可复核的研究分类。单日资金不等于买卖信号，不证明连续流入、趋势或回调；风险榜不等于减持指令。",
+             "分类规则尚未通过回测；数据时效、历史可得性和模型验证分别展示。仅有文件修改时间的历史缓存不能证明历史时点的原始可得性。",
+             f"全量合格 {coverage['eligible']} 只；可做历史六类观察 {coverage['classified_with_history']} 只；数据不足 {coverage['insufficient_data']} 只；机会观察 {coverage['opportunity_watch']} 只；风险观察 {coverage['risk_watch']} 只（允许交叉）。",
+             "", "| 历史状态 | 数量 |", "|---|---:|"]
+    lines.extend(f"| {CATEGORY_LABELS.get(key, key)} | {value} |" for key, value in observation["category_counts"].items())
+    lines.extend(["", "| 资产类别（名称推断） | 数量 |", "|---|---:|"])
+    lines.extend(f"| {ASSET_LABELS.get(key, key)} | {value} |" for key, value in observation["asset_class_counts"].items())
+    by_symbol = {row["symbol"]: row for row in observation["rows"]}
+    if selected:
+        lines.extend(["", f"### 全部冻结候选的观察覆盖（{len(selected)}只）", "",
+                      "已生成本轮预测与仅粗筛观察分开标记；未预测不等于 HOLD。", "",
+                      "| ETF | 名称 | 资产类别 | 单日观察 | 历史状态 | 历史数据质量 | 本轮预测 |",
+                      "|---|---|---|---|---|---|---|"])
+        for candidate in selected:
+            row = by_symbol.get(candidate["symbol"])
+            if row is None:
+                lines.append(f"| {candidate['symbol']} | {_cell(candidate['name'])} | 未记录 | 本截面未覆盖 | 数据不足 | 不回填 | {'已生成' if candidate['symbol'] in prediction_symbols else '仅粗筛观察'} |")
+                continue
+            quality = row["quality"]
+            lines.append(f"| {row['symbol']} | {_cell(row['name'])} | {row['asset_class_label']} | {row['snapshot_label']} | {row['category_label']} | `{quality['history_status']}` / `{quality['history_availability']}` | {'已生成' if row['symbol'] in prediction_symbols else '仅粗筛观察'} |")
+    for key, label in (("opportunity_watch", "机会观察榜"), ("risk_watch", "弱势与资金流出风险观察榜")):
+        lines.extend(["", f"### {label}（最多{observation['watchlist_top_n']}只）", "",
+                      "| ETF | 名称 | 资产类别 | 单日观察 | 历史状态 | 净流入占比 | 是否冻结候选 |",
+                      "|---|---|---|---|---|---:|---|"])
+        for symbol in observation[key]:
+            row = by_symbol[symbol]
+            lines.append(f"| {row['symbol']} | {_cell(row['name'])} | {row['asset_class_label']} | {row['snapshot_label']} | {row['category_label']} | {_pct(row['evidence']['main_net_inflow_pct'])} | {'是' if row['in_frozen_selection'] else '否'} |")
+        if not observation[key]:
+            lines.append("| — | 当前没有满足观察规则的标的 | — | — | — | — | — |")
+    lines.extend(["", "### 各类后续复核条件", "", "| 类别 | 继续观察的条件 | 重新分类条件 |", "|---|---|---|"])
+    seen = set()
+    for row in observation["rows"]:
+        if row["category"] not in seen:
+            lines.append(f"| {row['category_label']} | {_cell(row['followup_condition'])} | {_cell(row['invalidation_condition'])} |")
+            seen.add(row["category"])
+    lines.extend(["", f"规则版本：`{observation['rule_version']}`；完整阈值、全量合格行、原因码和来源哈希已写入本轮筛选 JSON。", observation["caveat"]])
+    return lines
+
+
+def _discrimination_label(row: dict) -> str:
+    status = row.get("discrimination_status", row.get("model_diagnostics", {}).get("discrimination_status", "legacy_not_recorded"))
+    labels = {"baseline_fallback": "历史基准回退", "base_rate_only": "历史基准回退",
+              "baseline_only": "历史基准回退", "model_differentiated": "有区分（有效性另看验证）",
+              "calibration_collapsed_to_base_rate": "历史基准回退",
+              "uncalibrated": "未校准", "uncalibrated_insufficient_data": "未校准",
+              "discriminating": "有区分（有效性另看验证）", "model_discriminates": "有区分（有效性另看验证）"}
+    return labels.get(status, str(status))
 
 
 def build_research_report(cfg: dict, context: dict | None = None) -> Path:
@@ -58,11 +112,22 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
                         ids.add(row["prediction_id"])
     lines = ["# ETF cycle 预测与资金流报告", "",
              f"生成：{datetime.now(timezone.utc).isoformat()}", "",
-             f"本轮：`{context.get('cycle_id', context.get('started_at_utc'))}`；结果：`{context.get('outcome', 'running')}`。",
+             f"本轮：`{context.get('cycle_id', context.get('started_at_utc'))}`；研究流程结果（归档前）：`{context.get('outcome', 'running')}`。",
+             f"最终运行及备份状态以本轮 cycle JSON 的 outcome / archive 为准：`{context.get('result_path', '未记录')}`。",
              f"数据模式：`{context.get('data_mode', 'legacy_not_recorded')}`；决策时间：{context.get('decision_at_utc', '旧版本未记录')}。",
              f"深度预测范围：粗筛前 {context.get('requested_prediction_top_n', '旧版本未记录')} 名；本轮实际候选 {context.get('prediction_candidate_count', len(context.get('candidate_symbols', [])))} 只。", "",
              "## 执行与等待", "", "| 步骤 | 状态 |", "|---|---|"]
     lines.extend(f"| {_cell(step['name'])} | {_cell(step['status'])} |" for step in context.get("steps", []))
+    if "prediction_eligible_symbols" in context:
+        lines.extend(["", f"预测覆盖：申请候选 {context.get('prediction_candidate_count', 0)} 只；数据检查后可预测 {len(context['prediction_eligible_symbols'])} 只；本轮实际引用冻结预测 {len({row['symbol'] for row in predictions})} 只 / {len(predictions)} 条（标的×周期）。"])
+    if context.get("prediction_exclusions"):
+        reasons = {"missing_history": "缺少可用历史日线", "stale_or_future_history": "历史日线过期或含未来日期",
+                   "insufficient_feature_history": "计算特征的历史长度不足", "candidate_history_dates_disagree": "历史行情日与本轮最新日期不同",
+                   "pooled_model_requires_two_candidates": "联合模型至少需要两只可预测候选", "current_candidate_refresh_failed": "本轮历史刷新失败",
+                   "readiness_check_failed": "数据就绪检查失败"}
+        lines.extend(["", "### 预测排除与数据等待原因", "", "| ETF | 原因 | 最新行情日 |", "|---|---|---|"])
+        for item in context["prediction_exclusions"]:
+            lines.append(f"| {_cell(item.get('symbol', '本轮'))} | {_cell(reasons.get(item['reason'], item['reason']))} | {_cell(item.get('last_date'))} |")
     if context.get("data_readiness"):
         lines.extend(["", f"数据就绪：`{context['data_readiness']}`。"])
     lines.extend(["", "## 资金流口径", "", FLOW_BASIS + "。",
@@ -74,6 +139,15 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
         for row in screen["selected"]:
             divergence = row.get("order_divergence", {})
             lines.append(f"| {row['symbol']} | {_cell(row['name'])} | {_amount(row.get('main_net_inflow'))} | {_pct(row.get('main_net_inflow_pct'))} | {_cell(divergence.get('signal', 'no_data'))} | {_cell(divergence.get('factor'))} | {row['screen_score']:.4f} |")
+        prediction_symbols = {row["symbol"] for row in predictions}
+        if screen.get("opportunity_observation"):
+            lines.extend(_observation_lines(screen["opportunity_observation"], screen["selected"], prediction_symbols,
+                                            "冻结筛选时的分类与覆盖"))
+        else:
+            lines.extend(["", "旧冻结筛选未记录分类，不使用本轮数据补写其历史判断。"])
+        if screen.get("current_opportunity_observation"):
+            lines.extend(_observation_lines(screen["current_opportunity_observation"], screen["selected"], prediction_symbols,
+                                            "本轮独立观察（不属于旧冻结决策依据）"))
         try:
             directory = resolve_project_path(cfg, cfg["etf_market"]["snapshot_dir"])
             raw = _read(_snapshot_path(directory, screen["source_snapshot"]))["records"]
@@ -103,6 +177,13 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
         lines.append(f"| {row['symbol']} | {row['feature_date']} | {row['horizon']}日 | {row['probability_up']:.2%} | {_cell(periods.get('single_day', {}).get('grade', 'legacy_not_recorded'))} | {_cell(periods.get('five_observation_days', {}).get('grade', 'legacy_not_recorded'))} | {row['probability_status']} | {row['frozen_at_utc']} |")
     if not predictions:
         lines.extend(["", "本轮没有可引用的冻结预测；未展示其他运行的预测补位。"])
+    else:
+        lines.extend(["", "### 概率区分能力与验证状态", "",
+                      "回退历史上涨比例时，不代表各 ETF 的机会恰好相同；原始概率存在差异也不证明有效。分类和概率均不自动转成买卖指令。", "",
+                      "| ETF | 周期 | 原始上涨概率 | 最终上涨概率 | 区分状态 | 模型验证状态 |", "|---|---:|---:|---:|---|---|"])
+        for row in predictions:
+            raw = finite(row.get("raw_probability_up"))
+            lines.append(f"| {row['symbol']} | {row['horizon']}日 | {f'{raw:.2%}' if raw is not None else '旧记录未提供'} | {row['probability_up']:.2%} | {_cell(_discrimination_label(row))} | {_cell(row['probability_status'])} |")
     lines.extend(["", "## 每只 ETF 预测内的资金流依据", ""])
     for row in predictions:
         flow = row.get("fund_flow", {})
@@ -125,15 +206,15 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
         lines.append(f"- 20 个观察日参考：{_amount(window.get('net_inflow_sum'))}；已覆盖 {window.get('observed_days', 0)} 日。")
         lines.extend(["", "窗口按已观测日期计数，不保证交易日连续；不足窗口或有缺值时不补零。", ""])
     lines.extend(["## 本轮模型验证", "", "| 周期 | 样本 | Brier | 历史概率 Brier | 发布门 |", "|---|---:|---:|---:|---|"])
-    gate = cfg["model"].get("validation_gate", {})
+    from .pipeline import validation_metrics
     for horizon in cfg["horizons"]:
         backtest = _read(artifacts.get(f"backtest_{horizon}d"))
         if not backtest:
             continue
         metric = backtest["metrics"]
-        enough = metric.get("rows", 0) >= gate.get("minimum_rows", 0)
-        better = not gate.get("require_brier_below_historical_rate", True) or metric.get("brier", 1) < metric.get("historical_rate_brier", 0)
-        lines.append(f"| {horizon}日 | {metric.get('rows', 0)} | {metric.get('brier')} | {metric.get('historical_rate_brier')} | {'通过' if enough and better else '未通过'} |")
+        validation = context.get("validation", {}).get(str(horizon)) or validation_metrics(cfg, metric)
+        lines.append(f"| {horizon}日 | {metric.get('rows', 0)} | {metric.get('brier')} | {metric.get('historical_rate_brier')} | {'通过' if validation['passed'] else '未通过'} |")
+        lines.append(f"\n{horizon}日核验：{validation['reason']}；覆盖 {metric.get('unique_dates', '旧版本未记录')} 个日期。通过这里只表示条件模型质量门，不能替代策略及前瞻验证。\n")
     if artifacts.get("integration"):
         integration = _read(artifacts["integration"])
         lines.extend(["", "## 证据与独立增益", "", f"本轮整合：`{integration['outcome']}`。明细：`{artifacts['integration']}`。"])

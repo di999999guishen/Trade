@@ -218,8 +218,10 @@ def insert_prediction(connection: sqlite3.Connection, payload: dict, commit: boo
 
 
 def record_run(connection: sqlite3.Connection, run_type: str, cfg: dict, result_path: Path) -> str:
+    from .archives import redact_config
+
     run_id = str(uuid.uuid4())
-    public_cfg = {key: value for key, value in cfg.items() if not key.startswith("_")}
+    public_cfg = redact_config(cfg)
     connection.execute(
         "INSERT INTO runs VALUES (?, ?, ?, ?, ?)",
         (run_id, run_type, json.dumps(public_cfg, ensure_ascii=False, sort_keys=True), str(result_path.resolve()), datetime.now(timezone.utc).isoformat()),

@@ -8,6 +8,12 @@
   "legacy_cache_dir": null,
   "state_db": "state/research.db",
   "runs_dir": "runs",
+  "archives": {
+    "enabled": true,
+    "root_dir": "archives",
+    "include_inputs": true,
+    "include_database": true
+  },
   "evidence": {
     "enabled": true,
     "inbox_dir": "datasets/evidence_inbox",
@@ -43,6 +49,8 @@
     "timeout_seconds": 1800
   },
   "workflow": {
+    "prediction_top_n": 20,
+    "agent_top_n": 5,
     "max_quote_age_days": 4,
     "flow_round_trip_cost_bps": 10,
     "flow_grade_thresholds_pct": {"mild": 3.0, "strong": 10.0, "extreme": 20.0},
@@ -62,7 +70,8 @@
     "l2": 0.01,
     "validation_gate": {
       "require_brier_below_historical_rate": true,
-      "minimum_rows": 1000
+      "minimum_rows": 1000,
+      "minimum_dates": 60
     }
   },
   "universes": {

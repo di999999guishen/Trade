@@ -28,8 +28,12 @@ def parser() -> argparse.ArgumentParser:
     evidence_test.add_argument("--universe", default="commodity")
     evidence_test.add_argument("--horizon", type=int, default=5)
     cycle = commands.add_parser("cycle", help="run the end-to-end research workflow")
-    cycle.add_argument("--top", type=int, default=5)
+    cycle.add_argument("--top", type=int, default=None, help="prediction candidate cap; default from workflow.prediction_top_n (20)")
     cycle.add_argument("--skip-fetch", action="store_true", help="reuse frozen network snapshots")
+    archive = commands.add_parser("archive-cycle", help="archive or verify the immutable backup of a saved cycle")
+    archive.add_argument("path")
+    verify = commands.add_parser("verify-archive", help="check every archived file hash and the database integrity")
+    verify.add_argument("path")
     fetch = commands.add_parser("fetch", help="fetch daily bars into the isolated dataset directory")
     fetch.add_argument("--universe", default="commodity")
     commands.add_parser("fetch-external", help="fetch mapped commodity futures series")
@@ -71,7 +75,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         cfg = load_config(args.config)
-        if args.command == "integrate-etfs":
+        if args.command in {"archive-cycle", "verify-archive"}:
+            from pathlib import Path
+            from .archives import archive_cycle, verify_archive
+
+            target = Path(args.path)
+            if args.command == "verify-archive":
+                result = verify_archive(target)
+            else:
+                context = json.loads(target.read_text(encoding="utf-8"))
+                cfg.update({key: value for key, value in context.get("runtime_config", {}).items() if not key.startswith("_")})
+                result = archive_cycle(cfg, context, target)
+        elif args.command == "integrate-etfs":
             from .etf_integration import run_etf_integration
 
             payload = run_etf_integration(cfg, args.universe)
@@ -197,6 +212,10 @@ def main(argv: list[str] | None = None) -> int:
             result = settle_predictions(cfg)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.command in {"integrate-etfs", "cycle"} and result["outcome"] == "partial_failure":
+            return 2
+        if args.command == "verify-archive" and (not result["ok"] or not result["complete"]):
+            return 2
+        if args.command == "archive-cycle" and result["status"] not in {"complete", "disabled"}:
             return 2
         return 0
     except Exception as exc:

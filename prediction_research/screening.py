@@ -17,6 +17,7 @@ from .features import build_samples
 from .evidence import utc, now_utc
 from .flow_context import finite
 from .order_divergence import order_divergence
+from .opportunity import build_opportunity_observation
 
 
 def _number(value, default=0.0) -> float:
@@ -116,6 +117,7 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
     eligible, selected = select_etfs(fresh, rules, selection_limit)
     if not selected:
         raise ValueError("no eligible ETF candidates with fresh, complete money-flow data")
+    observation = build_opportunity_observation(cfg, eligible, selected, manifest, decision.isoformat())
     payload = {
         "run_type": "etf_money_flow_coarse_screen", "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "source_snapshot": manifest, "universe_records": len(snapshot["records"]), "eligible_records": len(eligible),
@@ -124,6 +126,7 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
         "flow_caveat": snapshot["flow_definition"], "selected": selected,
         "decision_at_utc": decision.isoformat(), "fresh_records": len(fresh),
         "screen_freeze_policy": "first_daily_selection_wins",
+        "opportunity_observation": observation,
         "order_divergence_coverage": {
             "eligible_with_data": sum(row["order_divergence"]["status"] == "available" for row in eligible),
             "selected_with_data": sum(row["order_divergence"]["status"] == "available" for row in selected),
@@ -148,6 +151,15 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
                 raise ValueError("frozen screen was created after the requested decision")
             selected = payload["selected"]
             payload["reused_frozen_screen"] = True
+            # Keep the historical screen byte-for-byte in the database. New
+            # observations have their own source and time, never inherited by
+            # old selections or presented as past decision evidence.
+            frozen_symbols = {row["symbol"] for row in selected}
+            for row in observation["rows"]:
+                row["in_frozen_selection"] = row["symbol"] in frozen_symbols
+            observation["coverage"]["selected"] = len(selected)
+            observation["binding"] = "current_observation_not_frozen_decision_evidence"
+            payload["current_opportunity_observation"] = observation
         else:
             payload["rule_hash"] = rule_hash
             connection.execute("INSERT INTO screen_batches VALUES (?, ?, ?)",

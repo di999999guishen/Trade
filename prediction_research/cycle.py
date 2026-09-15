@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import platform
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +26,7 @@ from .tradingagents_adapter import run_tradingagents, settle_agent_analyses
 
 
 def candidate_history_status(cfg: dict, candidates: list[dict], decision: str) -> dict:
-    issues, dates = [], {}
+    issues, dates, eligible = [], {}, []
     local_date = utc(decision).astimezone(ZoneInfo(cfg.get("timezone", "Asia/Shanghai"))).date()
     for asset in candidates:
         try:
@@ -33,16 +36,27 @@ def candidate_history_status(cfg: dict, candidates: list[dict], decision: str) -
             age = (local_date - last).days
             if age < 0 or age > int(cfg.get("workflow", {}).get("max_quote_age_days", 4)):
                 issues.append({"symbol": asset["symbol"], "reason": "stale_or_future_history", "last_date": last.isoformat()})
+            elif len(snapshot.bars) < 61:
+                issues.append({"symbol": asset["symbol"], "reason": "insufficient_feature_history", "bars": len(snapshot.bars)})
+            else:
+                eligible.append(asset["symbol"])
         except (FileNotFoundError, ValueError):
             issues.append({"symbol": asset["symbol"], "reason": "missing_history"})
-    if len(set(dates.values())) > 1:
-        issues.append({"reason": "candidate_history_dates_disagree"})
-    if len(candidates) < 2:
+    if eligible:
+        latest = max(dates[symbol] for symbol in eligible)
+        for symbol in eligible[:]:
+            if dates[symbol] != latest:
+                eligible.remove(symbol)
+                issues.append({"symbol": symbol, "reason": "candidate_history_dates_disagree", "last_date": dates[symbol]})
+    if len(eligible) < 2:
         issues.append({"reason": "pooled_model_requires_two_candidates"})
-    return {"status": "waiting_for_history" if issues else "ready", "issues": issues, "last_dates": dates}
+    status = "waiting_for_history" if len(eligible) < 2 else "ready_with_exclusions" if issues else "ready"
+    return {"status": status, "issues": issues, "last_dates": dates, "eligible_symbols": eligible,
+            "waiting": bool(issues)}
 
 
-def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
+def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> dict:
+    top_n = int(top_n if top_n is not None else cfg.get("workflow", {}).get("prediction_top_n", 20))
     if top_n < 1:
         raise ValueError("top must be positive")
     cfg = copy.deepcopy(cfg)
@@ -53,6 +67,11 @@ def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
               "started_at_utc": now_utc(), "data_mode": "cached_validation" if skip_fetch else "network_refresh",
               "requested_prediction_top_n": top_n, "steps": [], "artifacts": {}, "outcome": "running",
               "result_path": str(path.resolve())}
+    module_root = Path(__file__).resolve().parent
+    source_files = sorted(module_root.glob("*.py")) + sorted((module_root / "adapters").glob("*.py"))
+    report["runtime"] = {"python": sys.version, "platform": platform.platform(),
+                         "source_sha256": {str(source.relative_to(module_root)).replace("\\", "/"):
+                                           hashlib.sha256(source.read_bytes()).hexdigest() for source in source_files}}
 
     def persist():
         temporary = path.with_suffix(".tmp")
@@ -119,15 +138,21 @@ def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
     if not skip_fetch and tracked:
         history_fetch = step("fetch_tracked_histories", lambda: fetch_universe(tracked["assets"], market_data_dir(cfg)))
     def readiness():
-        value = candidate_history_status(cfg, candidates, report["decision_at_utc"])
-        if not skip_fetch and candidates and (history_fetch is None or
-                set(history_fetch.get("failures", {})) & set(report["candidate_symbols"])):
-            value["status"] = "waiting_for_history"
-            value["issues"].append({"reason": "current_candidate_refresh_failed"})
+        failed = (set(report["candidate_symbols"]) if history_fetch is None else
+                  set(history_fetch.get("failures", {})) & set(report["candidate_symbols"])) if not skip_fetch else set()
+        value = candidate_history_status(cfg, [row for row in candidates if row["symbol"] not in failed], report["decision_at_utc"])
+        if failed:
+            value["status"] = "ready_with_exclusions" if len(value["eligible_symbols"]) >= 2 else "waiting_for_history"
+            value["waiting"] = True
+            value["issues"].extend({"symbol": symbol, "reason": "current_candidate_refresh_failed"} for symbol in sorted(failed))
         return value
     ready = step("candidate_history_status", readiness)
-    history_ready = bool(candidates and ready and ready["status"] == "ready")
+    history_ready = bool(candidates and ready and ready["status"] in {"ready", "ready_with_exclusions"})
     report["data_readiness"] = ready["status"] if ready else "failed"
+    eligible_symbols = set(ready.get("eligible_symbols", report["candidate_symbols"])) if history_ready else set()
+    cfg["universes"]["screened_current"] = [row for row in cfg["universes"]["screened_current"] if row["symbol"] in eligible_symbols]
+    report["prediction_eligible_symbols"] = sorted(eligible_symbols)
+    report["prediction_exclusions"] = ready.get("issues", []) if ready else [{"reason": "readiness_check_failed"}]
 
     if cfg.get("evidence", {}).get("enabled", False) and screen_context:
         from .etf_integration import run_etf_integration
@@ -149,6 +174,23 @@ def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
             blocked(f"backtest_{horizon}d", "current_candidates_or_histories_not_ready")
             blocked(f"predict_{horizon}d", "current_candidates_or_histories_not_ready")
             continue
+        def training_readiness(horizon=horizon):
+            from .features import build_samples
+            samples = []
+            for asset in cfg["universes"]["screened_current"]:
+                samples.extend(build_samples(find_cache(asset["symbol"], configured_data_dirs(cfg)), horizon))
+            dates = sorted({sample.feature_date for sample in samples})[-int(cfg["model"]["max_train_dates"]):]
+            allowed = set(dates)
+            recent = [sample for sample in samples if sample.feature_date in allowed]
+            enough = len(recent) >= 80 and len({sample.target_up for sample in recent}) >= 2 and len(dates) >= int(cfg["model"]["min_train_dates"])
+            return {"status": "ready" if enough else "waiting_for_training_samples", "horizon": horizon,
+                    "labeled_rows": len(recent), "training_dates": len(dates),
+                    "minimum_train_dates": cfg["model"]["min_train_dates"], "minimum_rows": 80}
+        train_ready = step(f"training_readiness_{horizon}d", training_readiness)
+        if not train_ready or train_ready["status"] != "ready":
+            report["steps"].append({"name": f"predict_{horizon}d", "status": "waiting_for_data", "reason": "insufficient_training_history"})
+            persist()
+            continue
         def backtest(horizon=horizon):
             output, _ = run_backtest(cfg, "screened_current", horizon, "base", "pooled")
             report["artifacts"][f"backtest_{horizon}d"] = str(output.resolve())
@@ -169,7 +211,7 @@ def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
     if cfg.get("workflow", {}).get("skip_tradingagents"):
         report["steps"].append({"name": "tradingagents", "status": "skipped_by_configuration"})
     elif screen_context and history_ready:
-        step("tradingagents", lambda: str(run_tradingagents(cfg, top_n)[0]))
+        step("tradingagents", lambda: str(run_tradingagents(cfg, min(top_n, int(cfg.get("workflow", {}).get("agent_top_n", 5))))[0]))
     else:
         blocked("tradingagents", "current_candidates_not_ready")
     step("settle_predictions", lambda: settle_predictions(cfg))
@@ -182,6 +224,8 @@ def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
             return "partial_failure"
         return "complete_with_data_waits" if "waiting_for_data" in statuses else "complete"
     report["outcome"] = outcome()
+    from .archives import redact_config
+    report["runtime_config"] = redact_config(cfg)
     output = step("build_report", lambda: str(build_research_report(cfg, report)))
     if output:
         report["artifacts"]["report"] = output
@@ -190,4 +234,16 @@ def run_cycle(cfg: dict, top_n: int = 5, skip_fetch: bool = False) -> dict:
     persist()
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
         record_run(connection, "cycle", cfg, path)
+    from .archives import archive_cycle
+    prior_outcome = report["outcome"]
+    try:
+        report["archive"] = {**archive_cycle(cfg, report, path), "cycle_outcome_before_archive": prior_outcome}
+        if report["archive"]["status"] not in {"complete", "disabled"}:
+            report["outcome"] = "partial_failure"
+    except Exception as exc:
+        report["archive"] = {"status": "failed", "error_type": type(exc).__name__,
+                             "error": str(exc) if type(exc).__name__ == "ArchiveError" else "archive failed; inspect storage and inputs",
+                             "cycle_outcome_before_archive": prior_outcome}
+        report["outcome"] = "partial_failure"
+    persist()
     return report

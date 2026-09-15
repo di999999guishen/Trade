@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 
 from .features import Sample
-from .model import LogisticModel
+from .model import LogisticModel, _sigmoid
 
 
 @dataclass(frozen=True)
@@ -19,16 +19,26 @@ class PredictionResult:
     calibrated: bool
     baseline_probability: float
     momentum_prediction: int
+    raw_probability_up: float | None = None
+    discrimination_status: str = "legacy_unrecorded"
 
 
 def _fit_model(training: list[Sample], model_cfg: dict) -> LogisticModel:
+    training = sorted(training, key=lambda s: (s.feature_date, s.symbol))
     dates = sorted({sample.feature_date for sample in training})
+    if not dates:
+        raise ValueError("no labeled training dates")
     calibration_dates = max(1, int(len(dates) * float(model_cfg["calibration_fraction"])))
     cutoff = dates[-calibration_dates]
-    core = [sample for sample in training if sample.feature_date < cutoff]
+    core = [sample for sample in training if sample.feature_date < cutoff
+            and sample.target_end_date and sample.target_end_date < cutoff]
     calibration = [sample for sample in training if sample.feature_date >= cutoff]
+    purged = sum(sample.feature_date < cutoff and sample.target_end_date >= cutoff
+                 for sample in training if sample.target_end_date)
+    fallback = False
     if len(core) < 40 or len({sample.target_up for sample in core}) < 2:
         core, calibration = training, []
+        fallback = True
     cap = int(model_cfg.get("max_fit_rows", 2500))
     if len(core) > cap:
         step = len(core) / cap
@@ -41,6 +51,14 @@ def _fit_model(training: list[Sample], model_cfg: dict) -> LogisticModel:
     )
     if len(calibration) >= int(model_cfg["min_calibration_rows"]):
         model.calibrate(calibration)
+    else:
+        model.calibration_details = {"status": "insufficient_calibration_rows", "input_rows": len(calibration)}
+    model.training_details = {
+        "split_policy": "date_grouped_purged_v1", "calibration_start": cutoff.isoformat(),
+        "input_rows": len(training), "core_rows": len(core), "calibration_rows": len(calibration),
+        "purged_rows": 0 if fallback else purged, "uncalibrated_fallback": fallback,
+        "core_latest_target": max(s.target_end_date for s in core).isoformat(),
+    }
     return model
 
 
@@ -77,6 +95,8 @@ def walk_forward(samples: list[Sample], model_cfg: dict) -> tuple[list[Predictio
                 calibrated=model.calibrated,
                 baseline_probability=base_rate,
                 momentum_prediction=int(sample.features[1] > 0),
+                raw_probability_up=_sigmoid(model.raw_score(sample.features)),
+                discrimination_status=model.discrimination_status,
             ))
         folds.append({
             "train_rows": len(training),
@@ -86,6 +106,7 @@ def walk_forward(samples: list[Sample], model_cfg: dict) -> tuple[list[Predictio
             "test_end": test_dates[-1].isoformat(),
             "test_rows": len(testing),
             "calibrated": model.calibrated,
+            "model_diagnostics": model.diagnostics(),
         })
     return results, folds
 
@@ -116,6 +137,10 @@ def metrics(results: list[PredictionResult]) -> dict:
         "decisive_coverage": round(len(decisive) / n, 6),
         "decisive_accuracy": round(decisive_accuracy, 6) if decisive_accuracy is not None else None,
         "calibrated_rows": sum(int(row.calibrated) for row in results),
+        "baseline_only_rows": sum(row.discrimination_status == "baseline_only" for row in results),
+        "unique_dates": len({row.feature_date for row in results}),
+        "probability_min": round(min(row.probability_up for row in results), 6),
+        "probability_max": round(max(row.probability_up for row in results), 6),
     }
 
 

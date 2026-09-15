@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -54,11 +55,15 @@ def load_cache(symbol: str, directory: Path) -> SeriesSnapshot:
                 )
             except (TypeError, ValueError):
                 continue
-            if min(bar.open, bar.high, bar.low, bar.close) <= 0 or bar.volume < 0:
+            if (not all(math.isfinite(value) for value in (bar.open, bar.high, bar.low, bar.close, bar.volume, bar.amount))
+                    or min(bar.open, bar.high, bar.low, bar.close) <= 0 or bar.volume < 0
+                    or bar.high < max(bar.open, bar.low, bar.close) or bar.low > min(bar.open, bar.close)):
                 continue
             bars[day] = bar
     ordered = tuple(bars[key] for key in sorted(bars))
-    if len(ordered) < 80:
+    # 60 lookback observations plus the current bar form one feature row.
+    # Fitting and validation retain their own, larger sample requirements.
+    if len(ordered) < 61:
         raise ValueError(f"{symbol}: only {len(ordered)} valid bars")
     provider_metadata = None
     manifest_path = directory / "manifest.json"

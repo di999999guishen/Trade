@@ -26,19 +26,71 @@ def _safe_tail(value: str) -> str:
 
 
 def _decision(stdout: str) -> str | None:
-    match = re.search(r"Final decision:\s*(.+)", stdout)
-    return match.group(1).strip() if match else None
+    matches = re.findall(r"^[ \t]*Final decision:[ \t]*(.*)$", stdout, re.IGNORECASE | re.MULTILINE)
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0].strip() or None
+    # Keep conflicting final fields visible to the parser instead of choosing one.
+    return "\n".join(f"Final decision: {value.strip()}" for value in matches)
+
+
+_RATING_ALIASES = {
+    "buy": "Buy", "买入": "Buy",
+    "overweight": "Overweight", "增持": "Overweight",
+    "hold": "Hold", "持有": "Hold", "观望": "Hold",
+    "underweight": "Underweight", "减持": "Underweight",
+    "sell": "Sell", "卖出": "Sell",
+}
+_RATING_INTENTS = {
+    "Buy": ("enter_or_add", "up"),
+    "Overweight": ("increase_exposure", "unclassified"),
+    "Hold": ("maintain_or_wait", "neutral"),
+    "Underweight": ("reduce_exposure", "unclassified"),
+    "Sell": ("exit_or_avoid", "down"),
+}
+_DECISION_FIELD = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*|__)?\s*"
+    r"(?:final decision|rating|recommendation|action|最终决策|最终评级|评级|建议|操作)"
+    r"\s*(?:\*\*|__)?\s*[:：]\s*(?:\*\*|__)?\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _rating_token(value: str) -> str | None:
+    token = value.strip().rstrip("。.!！").strip(" *_`\t")
+    if token.startswith("建议"):
+        token = token[2:].strip(" *_`\t")
+    return _RATING_ALIASES.get(token.casefold())
+
+
+def decision_semantics(value: str | None) -> dict:
+    """Read explicit ratings; never infer an action from words inside a narrative.
+
+    Overweight/Underweight express exposure changes, not predictions of positive
+    or negative absolute returns. Only explicit Buy/Sell retain the legacy
+    up/down direction used by outcome evaluation. Unknown text stays unknown.
+    """
+    result = {"rating": None, "action_intent": "unknown", "direction": "unclassified",
+              "parse_status": "missing" if not value or not value.strip() else "unrecognized"}
+    if result["parse_status"] == "missing":
+        return result
+    rating = _rating_token(value)
+    if rating is None:
+        fields = [match.group(1) for line in value.splitlines()
+                  if (match := _DECISION_FIELD.fullmatch(line))]
+        ratings = [_rating_token(field) for field in fields]
+        if not ratings or any(item is None for item in ratings):
+            return result
+        if len(set(ratings)) != 1:
+            return {**result, "parse_status": "ambiguous"}
+        rating = ratings[0]
+    intent, direction = _RATING_INTENTS[rating]
+    return {"rating": rating, "action_intent": intent, "direction": direction, "parse_status": "parsed"}
 
 
 def decision_direction(value: str | None) -> str:
-    upper = (value or "").upper()
-    if any(token in upper for token in ("SELL", "卖出", "看空")):
-        return "down"
-    if any(token in upper for token in ("BUY", "买入", "看多")):
-        return "up"
-    if any(token in upper for token in ("HOLD", "持有", "观望")):
-        return "neutral"
-    return "unclassified"
+    return decision_semantics(value)["direction"]
 
 
 def build_plan(cfg: dict, top_n: int) -> dict:
@@ -85,6 +137,7 @@ def run_tradingagents(cfg: dict, top_n: int) -> tuple[Path, dict]:
     db_path = resolve_project_path(cfg, cfg["state_db"])
     with connect(db_path) as connection:
         for item in items:
+            item["decision_semantics"] = decision_semantics(item.get("decision") if item["status"] == "ok" else None)
             item["analysis_id"] = record_agent_analysis(connection, plan["screen_report"], item, plan["trade_date"])
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output, payload
@@ -102,7 +155,8 @@ def settle_agent_analyses(cfg: dict) -> dict:
                 snapshot = load_cache(symbol, market_data_dir(cfg))
             except (FileNotFoundError, ValueError):
                 continue
-            direction = decision_direction(decision_text)
+            semantics = decision_semantics(decision_text)
+            direction = semantics["direction"]
             for horizon in cfg["horizons"]:
                 exists = connection.execute("SELECT 1 FROM agent_outcomes WHERE analysis_id=? AND horizon=?", (analysis_id, horizon)).fetchone()
                 if exists:
@@ -117,6 +171,8 @@ def settle_agent_analyses(cfg: dict) -> dict:
                     (outcome_id, analysis_id, horizon, direction, sample.target_end_date.isoformat(), sample.target_return,
                      sample.target_up, correct, datetime.now(timezone.utc).isoformat()),
                 )
-                settled.append({"analysis_id": analysis_id, "symbol": symbol, "horizon": horizon, "direction": direction, "actual_return": sample.target_return, "direction_correct": correct})
+                settled.append({"analysis_id": analysis_id, "symbol": symbol, "horizon": horizon,
+                                "decision_semantics": semantics, "direction": direction,
+                                "actual_return": sample.target_return, "direction_correct": correct})
         connection.commit()
     return {"successful_analyses": len(analyses), "settled": len(settled), "items": settled}

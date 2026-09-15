@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import external_data_dir, market_data_dir, resolve_project_path
 from .data import SeriesSnapshot, configured_data_dirs, find_cache, load_cache, load_universe
-from .evaluation import metrics, serialize_results, walk_forward
+from .evaluation import _fit_model, metrics, serialize_results, walk_forward
 from .features import EXTERNAL_FEATURE_NAMES, FEATURE_NAMES, Sample, augment_with_external, build_samples
-from .model import LogisticModel
+from .model import LogisticModel, _sigmoid
 from .store import connect, frozen_prediction, record_run
 
 
-BASE_MODEL_VERSION = "price-volume-logistic-v2"
-EXTERNAL_MODEL_VERSION = "commodity-external-logistic-v1"
-EXPOSURE_MODEL_VERSION = "commodity-exposure-logistic-v1"
-SCREENED_MODEL_VERSION = "screened-flow-price-logistic-v4"
+BASE_MODEL_VERSION = "price-volume-logistic-v3"
+EXTERNAL_MODEL_VERSION = "commodity-external-logistic-v2"
+EXPOSURE_MODEL_VERSION = "commodity-exposure-logistic-v2"
+SCREENED_MODEL_VERSION = "screened-flow-price-logistic-v5"
 
 
 def _run_path(cfg: dict, prefix: str) -> Path:
@@ -33,12 +36,22 @@ def _resolve_feature_set(universe: str, feature_set: str) -> str:
     return feature_set
 
 
-def _model_version(universe: str, feature_set: str, model_scope: str) -> str:
+def _model_version(universe: str, feature_set: str, model_scope: str, cfg: dict | None = None) -> str:
     if universe == "screened_current":
-        return SCREENED_MODEL_VERSION
-    if model_scope == "exposure":
-        return EXPOSURE_MODEL_VERSION
-    return EXTERNAL_MODEL_VERSION if feature_set == "external" else BASE_MODEL_VERSION
+        version = SCREENED_MODEL_VERSION
+    elif model_scope == "exposure":
+        version = EXPOSURE_MODEL_VERSION
+    else:
+        version = EXTERNAL_MODEL_VERSION if feature_set == "external" else BASE_MODEL_VERSION
+    if cfg is None:
+        return version
+    # Different candidate pools or fit parameters must not collide with an
+    # existing same-day frozen forecast. A matching spec still freezes once.
+    spec = {"model": cfg["model"], "feature_set": feature_set, "scope": model_scope,
+            "assets": sorted(cfg["universes"][universe], key=lambda row: row["symbol"])}
+    if feature_set == "external":
+        spec.update(external_series=cfg.get("external_series", {}), exposure_series=cfg.get("exposure_series", {}))
+    return version + "-" + hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
 
 
 def _external_snapshots(cfg: dict) -> dict[str, SeriesSnapshot]:
@@ -91,12 +104,14 @@ def doctor(cfg: dict) -> dict:
 
 def run_backtest(cfg: dict, universe: str, horizon: int, feature_set: str = "auto", model_scope: str = "pooled") -> tuple[Path, dict]:
     metadata, snapshots = load_universe(cfg, universe)
+    if metadata["missing"]:
+        raise ValueError(f"{universe}: configured training pool is incomplete: {metadata['missing']}")
     if len(snapshots) < 2:
         raise ValueError(f"{universe}: need at least two available series; missing={metadata['missing']}")
     feature_set = _resolve_feature_set(universe, feature_set)
     if model_scope not in {"pooled", "exposure"}:
         raise ValueError(f"unsupported model scope: {model_scope}")
-    model_version = _model_version(universe, feature_set, model_scope)
+    model_version = _model_version(universe, feature_set, model_scope, cfg)
     feature_names = FEATURE_NAMES + EXTERNAL_FEATURE_NAMES if feature_set == "external" else FEATURE_NAMES
     all_samples = _all_samples(cfg, snapshots, metadata["metadata"], horizon, feature_set)
     if model_scope == "pooled":
@@ -118,6 +133,7 @@ def run_backtest(cfg: dict, universe: str, horizon: int, feature_set: str = "aut
         "model_version": model_version,
         "feature_set": feature_set,
         "model_scope": model_scope,
+        "model_config": cfg["model"],
         "feature_names": feature_names,
         "validation_scope": "conditional_model_only_not_historical_money_flow_screen" if universe == "screened_current" else "full_configured_universe_model",
         "missing_assets": metadata["missing"],
@@ -155,30 +171,44 @@ def _latest_backtest(cfg: dict, universe: str, horizon: int, feature_set: str, m
             continue
         if (payload.get("model_version") == model_version and payload.get("feature_set", "base") == feature_set
                 and payload.get("model_scope", "pooled") == model_scope):
-            return {"path": str(path.resolve()), "metrics": payload.get("metrics", {})}
+            return {"path": str(path.resolve()), "metrics": payload.get("metrics", {}), "snapshots": payload.get("snapshots", {})}
     return None
 
 
+def validation_metrics(cfg: dict, metric: dict) -> dict:
+    """One quality gate shared by forecast publication and report rendering."""
+    gate = cfg["model"].get("validation_gate", {})
+    if not all(isinstance(metric.get(key), (int, float)) and math.isfinite(metric[key])
+               for key in ("rows", "brier", "historical_rate_brier")):
+        return {"passed": False, "reason": "missing or nonfinite validation metrics"}
+    if int(metric.get("rows", 0)) < int(gate.get("minimum_rows", 0)):
+        return {"passed": False, "reason": "insufficient out-of-sample rows"}
+    if int(metric.get("unique_dates", 0)) < int(gate.get("minimum_dates", 0)):
+        return {"passed": False, "reason": "insufficient observation dates (not independent labels)"}
+    if gate.get("require_brier_below_historical_rate", True) and metric["brier"] >= metric["historical_rate_brier"]:
+        return {"passed": False, "reason": "Brier score did not beat historical-rate baseline"}
+    return {"passed": True, "reason": "validation gate passed"}
+
+
 def _validation_status(cfg: dict, universe: str, horizon: int, feature_set: str, model_scope: str, model_version: str,
-                       backtest_path: Path | None = None) -> dict:
+                       backtest_path: Path | None = None, expected_snapshots: dict | None = None) -> dict:
     if backtest_path:
         frozen_test = json.loads(Path(backtest_path).read_text(encoding="utf-8"))
         expected = {"universe": universe, "horizon": horizon, "feature_set": feature_set,
                     "model_scope": model_scope, "model_version": model_version}
         if any(frozen_test.get(key) != value for key, value in expected.items()):
             raise ValueError("backtest context does not match prediction")
-        report = {"path": str(Path(backtest_path).resolve()), "metrics": frozen_test["metrics"]}
+        report = {"path": str(Path(backtest_path).resolve()), "metrics": frozen_test["metrics"],
+                  "snapshots": frozen_test.get("snapshots", {})}
     else:
         report = _latest_backtest(cfg, universe, horizon, feature_set, model_scope, model_version)
     if not report:
         return {"passed": False, "reason": "no matching walk-forward backtest", "report": None}
-    metric = report["metrics"]
-    gate = cfg["model"].get("validation_gate", {})
-    if int(metric.get("rows", 0)) < int(gate.get("minimum_rows", 0)):
-        return {"passed": False, "reason": "insufficient out-of-sample rows", "report": report}
-    if gate.get("require_brier_below_historical_rate", True) and metric.get("brier", 1) >= metric.get("historical_rate_brier", 0):
-        return {"passed": False, "reason": "Brier score did not beat historical-rate baseline", "report": report}
-    return {"passed": True, "reason": "validation gate passed", "report": report}
+    if expected_snapshots is not None:
+        actual = {symbol: row.get("sha256") for symbol, row in report.get("snapshots", {}).items()}
+        if actual != expected_snapshots:
+            return {"passed": False, "reason": "backtest training snapshots differ from current inputs", "report": report}
+    return {**validation_metrics(cfg, report["metrics"]), "report": report}
 
 
 def _latest_observed_training(samples: list[Sample], feature_date) -> list[Sample]:
@@ -189,12 +219,14 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
                    decision_at_utc: str | None = None, screen_context: tuple | None = None,
                    backtest_path: Path | None = None) -> tuple[Path, dict]:
     metadata, snapshots = load_universe(cfg, universe)
+    if metadata["missing"]:
+        raise ValueError(f"{universe}: configured training pool is incomplete: {metadata['missing']}")
     if len(snapshots) < 2:
         raise ValueError(f"{universe}: need at least two available series; missing={metadata['missing']}")
     feature_set = _resolve_feature_set(universe, feature_set)
     if model_scope not in {"pooled", "exposure"}:
         raise ValueError(f"unsupported model scope: {model_scope}")
-    model_version = _model_version(universe, feature_set, model_scope)
+    model_version = _model_version(universe, feature_set, model_scope, cfg)
     feature_names = FEATURE_NAMES + EXTERNAL_FEATURE_NAMES if feature_set == "external" else FEATURE_NAMES
     labeled = _all_samples(cfg, snapshots, metadata["metadata"], horizon, feature_set)
     latest = [_samples_for_asset(cfg, snapshot, metadata["metadata"][symbol], horizon, feature_set, include_unlabeled=True)[-1] for symbol, snapshot in snapshots.items()]
@@ -202,7 +234,8 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
     current = [sample for sample in latest if sample.feature_date == latest_date and sample.target_up is None]
     stale_assets = {sample.symbol: sample.feature_date.isoformat() for sample in latest if sample.feature_date != latest_date}
     eligible_training = _latest_observed_training(labeled, latest_date)
-    validation = _validation_status(cfg, universe, horizon, feature_set, model_scope, model_version, backtest_path)
+    validation = _validation_status(cfg, universe, horizon, feature_set, model_scope, model_version, backtest_path,
+                                    {symbol: snapshot.sha256 for symbol, snapshot in snapshots.items()})
     db_path = resolve_project_path(cfg, cfg["state_db"])
     predictions = []
     from .evidence import cutoff_utc, eligible_records, load_records, utc
@@ -234,18 +267,7 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
                 training = [row for row in training if row.feature_date in set(allowed_dates)]
                 if len(training) < 80:
                     raise ValueError(f"{exposure}: only {len(training)} eligible training rows")
-                date_split = sorted({row.feature_date for row in training})
-                calibration_count = max(1, int(len(date_split) * float(cfg["model"]["calibration_fraction"])))
-                cutoff = date_split[-calibration_count]
-                core = [row for row in training if row.feature_date < cutoff]
-                calibration = [row for row in training if row.feature_date >= cutoff]
-                cap = int(cfg["model"].get("max_fit_rows", 2500))
-                if len(core) > cap:
-                    step = len(core) / cap
-                    core = [core[int(index * step)] for index in range(cap)]
-                model = LogisticModel.fit(core, float(cfg["model"]["learning_rate"]), int(cfg["model"]["iterations"]), float(cfg["model"]["l2"]))
-                if len(calibration) >= int(cfg["model"]["min_calibration_rows"]):
-                    model.calibrate(calibration)
+                model = _fit_model(training, cfg["model"])
                 fitted_models[model_key] = model
                 training_rows += len(training)
                 latest_observed_targets.append(max(row.target_end_date for row in training))
@@ -278,8 +300,14 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
                 "horizon": horizon,
                 "expected_target_end": None,
                 "probability_up": round(probability, 6),
+                "raw_probability_up": round(_sigmoid(model.raw_score(sample.features)), 6),
+                "discrimination_status": model.discrimination_status,
+                "model_diagnostics": model.diagnostics(),
+                "model_state": asdict(model),
                 "probability_status": (
-                    "validated_calibrated" if validation["passed"] and model.calibrated
+                    "research_only_failed_validation" if not validation["passed"]
+                    else "research_only_baseline_fallback" if model.discrimination_status == "baseline_only"
+                    else "validated_calibrated" if model.calibrated
                     else "validated_uncalibrated" if validation["passed"]
                     else "research_only_failed_validation"
                 ),
@@ -296,6 +324,7 @@ def run_prediction(cfg: dict, universe: str, horizon: int, feature_set: str = "a
         "model_version": model_version,
         "feature_set": feature_set,
         "model_scope": model_scope,
+        "model_config": cfg["model"],
         "training_rows": training_rows,
         "latest_observed_target": max(latest_observed_targets).isoformat(),
         "missing_assets": metadata["missing"],

@@ -1,6 +1,6 @@
 # ETF 日常运行与观测手册
 
-更新：2026-09-06。适用范围仅为 ETF 研究流程；A 股个股和 TradingAgents-Astock 暂不执行。本手册用于每天收盘后的运行、检查、故障判断和结果复盘。六项修订的设计与验收细节见 [ETF_CYCLE_REMEDIATION_PLAN.md](ETF_CYCLE_REMEDIATION_PLAN.md)。
+更新：2026-09-15。适用范围为ETF研究流程。最新的分类、校准、覆盖及测试/回测结果见 [整改实施手册](ETF_REMEDIATION_20260915.md)，每日文件备份与恢复见 [归档指南](ETF_ARCHIVE_GUIDE.md)。9月6日六项修订保留在 [历史方案](ETF_CYCLE_REMEDIATION_PLAN.md)。
 
 ## 1. 本轮修改解决了什么
 
@@ -20,7 +20,7 @@
 
 ```powershell
 Set-Location 'E:\Trade\TradingAgents'
-.\.venv\Scripts\python.exe -m prediction_research.cli cycle --top 5
+.\.venv\Scripts\python.exe -m prediction_research.cli cycle
 .\.venv\Scripts\python.exe -m prediction_research.cli status
 ```
 
@@ -32,7 +32,7 @@ Set-Location 'E:\Trade\TradingAgents'
 
 完整 cycle 自动执行快照、新闻、筛选、待跟踪行情、证据整合、历史资金流研究、5/20 日回测与预测、结算和报告，不需要逐阶段手工触发。
 
-粗筛仍冻结前 20 名，默认只有前 5 名进入深度历史更新、5/20 日模型回测和预测。cycle JSON 的 `requested_prediction_top_n` 与 `prediction_candidate_count` 用于确认计划数和实际数。
+粗筛仍冻结前20名，默认量化申请前20名，历史不合格的标的明确排除；可用子集满足训练条件后进入5/20日回测和预测。cycle JSON的 `requested_prediction_top_n`、`prediction_candidate_count`、`prediction_eligible_symbols` 和 `prediction_ids` 分别记录配置上限、申请数量、特征数据合格列表和实际冻结输出。
 
 ## 3. 每天先看哪些状态
 
@@ -140,14 +140,15 @@ cycle 会自动运行，也可单独执行：
 | 历史资金流研究 | `prediction_research/runs/flow_strategy_*.json` |
 | 5/20 日回测与预测 | `prediction_research/runs/backtest_*`、`prediction_research/runs/prediction_*` |
 | 状态数据库 | `prediction_research/state/research.db` |
+| 每轮独立归档 | `prediction_research/archives/YYYY-MM-DD/<cycle_id>/` |
 
-日常观测以 `status.latest_cycle.artifacts` 为唯一入口，避免手工选择目录中时间最新但不属于同一次 cycle 的文件。
+日常观测以 `status.latest_cycle.artifacts` 为入口，并检查cycle的 `archive`；最终outcome包含归档失败状态。使用 `verify-archive` 检查对应目录的 `ok` 和 `complete`，避免把分散报告当成已完成备份。
 
 ## 9. 当前已知等待项
 
 - 真实资金流目前只有 1 个独立观察日，5/20 日累计窗口尚未形成；
 - 全量合格池等权对照当前缺 1101 个 ETF 历史序列，普通 cycle 不会自动发起上千次下载；
-- 5/20 日量价模型尚未超过历史概率 Brier 基线；
+- 模型验证按本轮及周期分别检查；最新固定候选对照的5日仍未过基率，20日条件结果改善但完整策略与前瞻有效性未获证明；
 - FinGenius 和 smart-money-profiler 只有标准证据入口，尚无真实第三方输入；
 - ETF 份额、净值、申赎及可识别账户主体数据尚未接入；
 - A 股个股及 TradingAgents-Astock 按当前范围延期。

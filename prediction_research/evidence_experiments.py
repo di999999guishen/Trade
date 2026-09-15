@@ -124,7 +124,9 @@ def run_evidence_experiments(cfg: dict, universe: str = "commodity", horizon: in
         augmented = [replace(row, features=row.features + tuple(value for group in groups for value in features[group][keys(row)]))
                      for row in samples]
         predicted, variant_folds = walk_forward(augmented, cfg["model"])
-        if variant_folds != folds or {keys(row) for row in predicted} != {keys(row) for row in baseline}:
+        boundary_keys = ("train_rows", "train_start", "latest_observed_target", "test_start", "test_end", "test_rows")
+        boundaries = lambda items: [{key: fold[key] for key in boundary_keys} for fold in items]
+        if boundaries(variant_folds) != boundaries(folds) or {keys(row) for row in predicted} != {keys(row) for row in baseline}:
             raise ValueError("paired experiment fold/sample mismatch")
         paired_base = [row for row in baseline if keys(row) in paired_keys]
         paired_variant = [row for row in predicted if keys(row) in paired_keys]
@@ -142,7 +144,7 @@ def run_evidence_experiments(cfg: dict, universe: str = "commodity", horizon: in
         "run_type": "etf_evidence_ablation", "created_at_utc": now_utc(), "universe": universe,
         "input_hash": input_hash,
         "horizon": horizon, "label": "next session open to horizon close",
-        "baseline_model_version": "price-volume-logistic-v2", "baseline_metrics": base_metrics,
+        "baseline_model_version": "price-volume-logistic-v3", "baseline_metrics": base_metrics,
         "baseline_predictions": serialize_results(baseline), "base_feature_names": FEATURE_NAMES,
         "extra_features_per_group": ["mean_score", "score_present", "log_evidence_count"],
         "sample_hash": digest([[row.symbol, row.feature_date.isoformat(), row.target_up, row.features] for row in samples]),
