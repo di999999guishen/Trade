@@ -32,16 +32,22 @@ logger = logging.getLogger(__name__)
 
 # 并发控制
 MAX_PARALLEL_STOCKS = 4  # 同时分析最多 4 只
-MAX_PREDICT_STOCKS = 21  # 默认预测21只（14基础 + 7用户指定ETF）
+MAX_PREDICT_STOCKS = 33  # 默认预测33只（美股巨头7+美债1+港股映射3+宽基3+行业3+贵金属2+大宗4+粮食3+中概1+指定6）
 
-# ── 默认观察列表 (全可交易：美股 + A股ETF，21只) ──────────────────────
+# ── 默认观察列表 (全可交易：美股 + A股ETF，33只) ──────────────────────
 # 用户画像: A股主板投资者，¥50,000总资产，可交易主板A股+ETF+美股
-# 覆盖: 美股科技3只 + 港股映射ETF 3只 + A股宽基ETF 3只 + A股行业ETF 3只 + 贵金属 2只 + 用户指定ETF 7只
+# 覆盖: 美股科技7只 + 美债1 + 港股映射3 + 宽基3 + 行业3 + 贵金属2 + 大宗4 + 粮食3 + 中概1 + 指定6
 DEFAULT_WATCHLIST = [
-    # ── 美股科技 (3只) ──
+    # ── 美股科技巨头 (7只) ──
     {"code": "AAPL",  "name": "苹果",       "market": "美股", "type": "个股", "desc": "美股科技蓝筹"},
     {"code": "MSFT",  "name": "微软",       "market": "美股", "type": "个股", "desc": "美股AI/云"},
     {"code": "NVDA",  "name": "英伟达",     "market": "美股", "type": "个股", "desc": "美股AI芯片"},
+    {"code": "GOOGL", "name": "谷歌",       "market": "美股", "type": "个股", "desc": "美股AI/搜索"},
+    {"code": "AMZN",  "name": "亚马逊",     "market": "美股", "type": "个股", "desc": "美股电商/云"},
+    {"code": "TSLA",  "name": "特斯拉",     "market": "美股", "type": "个股", "desc": "美股电动车"},
+    {"code": "META",  "name": "Meta",       "market": "美股", "type": "个股", "desc": "美股社交/元宇宙"},
+    # ── 美债ETF (1只) ──
+    {"code": "TLT",   "name": "20年美债ETF", "market": "美股", "type": "ETF", "desc": "美国长期国债(利率反向)"},
     # ── 港股映射ETF (3只) ──
     {"code": "513130", "name": "恒生科技ETF",  "market": "A股", "type": "ETF", "desc": "港股科技龙头"},
     {"code": "159920", "name": "恒生ETF",      "market": "A股", "type": "ETF", "desc": "港股大盘基准"},
@@ -55,10 +61,20 @@ DEFAULT_WATCHLIST = [
     {"code": "515170", "name": "食品饮料ETF",  "market": "A股", "type": "ETF", "desc": "A股食品饮料(白酒+乳业)"},
     {"code": "512010", "name": "医药ETF",      "market": "A股", "type": "ETF", "desc": "A股医药龙头"},
     # ── 贵金属 (2只) — 黄金/白银 ──
-    {"code": "518880", "name": "黄金ETF",      "market": "A股", "type": "ETF", "desc": "黄金现货(华安黄金ETF)"},
-    {"code": "159937", "name": "白银基金",      "market": "A股", "type": "ETF", "desc": "白银现货(博时白银LOF)"},
-    # ── 用户指定ETF (7只) — 有色金属/电力/上证/创新药/新能源/医疗 ──
-    {"code": "512400", "name": "有色金属ETF",   "market": "A股", "type": "ETF", "desc": "有色金属板块(南方基金)"},
+    {"code": "518880", "name": "黄金ETF",      "market": "A股", "type": "大宗", "desc": "黄金现货(华安黄金ETF)"},
+    {"code": "159937", "name": "白银基金",      "market": "A股", "type": "大宗", "desc": "白银现货(博时白银LOF)"},
+    # ── 大宗商品ETF (4只) — 有色/煤炭/钢铁/油气 ──
+    {"code": "512400", "name": "有色金属ETF",   "market": "A股", "type": "大宗", "desc": "有色金属板块(南方基金)"},
+    {"code": "515220", "name": "煤炭ETF",       "market": "A股", "type": "大宗", "desc": "煤炭能源(国泰基金)"},
+    {"code": "515210", "name": "钢铁ETF",       "market": "A股", "type": "大宗", "desc": "钢铁黑色金属(国泰基金)"},
+    {"code": "162411", "name": "华宝油气LOF",   "market": "A股", "type": "大宗", "desc": "原油油气(华宝基金)"},
+    # ── 粮食ETF (3只) — 粮食产业/农业主题/豆粕饲料 ──
+    {"code": "159698", "name": "粮食ETF",       "market": "A股", "type": "粮食", "desc": "国证粮食产业(种业/种植/农化)"},
+    {"code": "159825", "name": "农业ETF",       "market": "A股", "type": "粮食", "desc": "中证农业主题(全产业链)"},
+    {"code": "159985", "name": "豆粕ETF",       "market": "A股", "type": "粮食", "desc": "豆粕饲料原料(商品期货)"},
+    # ── 港股巨头映射ETF (1只) — 美团/京东/百度等中概 ──
+    {"code": "513050", "name": "中概互联网ETF", "market": "A股", "type": "ETF", "desc": "中概互联网(美团/京东/百度)"},
+    # ── 用户指定ETF (6只) — 电力/上证/创新药/新能源/医疗 ──
     {"code": "159611", "name": "电力ETF",       "market": "A股", "type": "ETF", "desc": "电力公用事业(景顺长城)"},
     {"code": "510160", "name": "上证指数ETF",   "market": "A股", "type": "ETF", "desc": "上证综合指数(南方基金)"},
     {"code": "589720", "name": "科创创新药ETF", "market": "A股", "type": "ETF", "desc": "科创板创新药(国泰基金)"},
@@ -180,7 +196,7 @@ def _run_trading_agent(ticker: str, name: str, analysis_date: str):
 
     config = DEFAULT_CONFIG.copy()
     config["llm_provider"] = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "deepseek")
-    config["deep_think_llm"] = "deepseek-v4-flash"
+    config["deep_think_llm"] = "deepseek-v4-pro"
     config["quick_think_llm"] = "deepseek-v4-flash"
     config["output_language"] = "Chinese"
     config["max_debate_rounds"] = 1
@@ -210,6 +226,49 @@ def predict_stock(ticker: str, name: str) -> dict:
             else:
                 logger.error(f"[{name}] 预测失败（已重试{attempt}次）: {str(e)[:120]}")
                 return {"ticker": ticker, "name": name, "decision": f"预测失败: {str(e)[:80]}", "status": "error"}
+
+
+# ── 大宗商品宏观背景信号 ─────────────────────────────────────────────────
+# 通过新浪美股API抓取美元/美债/原油/黄金/白银/铜的近期趋势，
+# 作为大宗商品ETF预测的宏观上下文（美元强、美债收益率上行通常压制大宗）。
+COMMODITY_MACRO_PROXIES = [
+    {"code": "UUP",  "name": "美元指数ETF", "note": "美元强弱(↑利空大宗)"},
+    {"code": "TLT",  "name": "20年美债ETF", "note": "美债价格(↑=收益率↓)"},
+    {"code": "USO",  "name": "原油ETF",      "note": "油价"},
+    {"code": "GLD",  "name": "黄金ETF",      "note": "金价"},
+    {"code": "SLV",  "name": "白银ETF",      "note": "银价"},
+    {"code": "COPX", "name": "铜矿ETF",      "note": "铜价(工业需求晴雨表)"},
+]
+
+
+def get_commodity_macro_signal() -> str:
+    """抓取大宗商品宏观背景（美元/美债/原油/黄金/白银/铜 近期趋势）。
+
+    复用新浪美股API（无需额外依赖），输出紧凑宏观读。单品失败优雅降级。
+    """
+    lines = []
+    for p in COMMODITY_MACRO_PROXIES:
+        code = p["code"]
+        try:
+            from tradingagents.dataflows.akshare_data import _fetch_us_sina
+            df = _fetch_us_sina(code)
+            if df is None or df.empty or "Close" not in df.columns:
+                lines.append(f"- {p['name']}({code}): 数据不可用")
+                continue
+            df = df.tail(30).reset_index(drop=True)
+            close = df["Close"].astype(float)
+            latest = float(close.iloc[-1])
+            chg_5d = (latest / float(close.iloc[-6]) - 1) * 100 if len(close) >= 6 else 0.0
+            chg_20d = (latest / float(close.iloc[-21]) - 1) * 100 if len(close) >= 21 else 0.0
+            lines.append(
+                f"- {p['name']}({code}) {p['note']}: 现价 {latest:.2f} | "
+                f"5日 {chg_5d:+.1f}% | 20日 {chg_20d:+.1f}%"
+            )
+        except Exception as e:
+            lines.append(f"- {p['name']}({code}): 获取失败 {str(e)[:40]}")
+    header = "## 大宗商品宏观背景（美元/美债/原油/贵金属/铜 近期趋势）\n"
+    header += "（美元走强、美债收益率上行通常压制大宗；反之利好黄金/白银/有色）\n"
+    return header + "\n".join(lines) + "\n"
 
 
 def main():
@@ -279,6 +338,19 @@ def main():
         print(f"  ⚠️ Polymarket 获取失败: {str(e)[:60]}")
         gold_poly_signal = f"Polymarket data unavailable: {e}"
 
+    # ── 大宗商品宏观背景信号 ──
+    print(f"  🛢️ 获取大宗商品宏观背景...")
+    commodity_macro_signal = ""
+    try:
+        commodity_macro_signal = get_commodity_macro_signal()
+        print(f"  📡 大宗商品宏观背景:")
+        for line in commodity_macro_signal.split("\n"):
+            if line.startswith("- "):
+                print(f"    {line}")
+    except Exception as e:
+        print(f"  ⚠️ 大宗宏观背景获取失败: {str(e)[:60]}")
+        commodity_macro_signal = f"Commodity macro unavailable: {e}"
+
     # 从新闻事件中提取相关 ETF/美股关键词，为观察列表补充事件上下文
     news_keywords = set()
     for event in major_events:
@@ -299,7 +371,7 @@ def main():
         predict_list.append(entry)
 
     print(f"  📋 观察列表: {len(DEFAULT_WATCHLIST)} 只 | 全部预测 (最多{MAX_PARALLEL_STOCKS}只并行)")
-    print(f"  💰 账户总资产: ¥{USER_BUDGET:,} | 🌍 美股3 | 🇭🇰 HK映射ETF 3 | 🇨🇳 A股宽基ETF 3 | 🏭 A股行业ETF 3 | 🥇 贵金属 2 | 📌 用户指定ETF 7")
+    print(f"  💰 账户总资产: ¥{USER_BUDGET:,} | 🌍 美股巨头7 | 🇺🇸 美债1 | 🇭🇰 HK映射ETF 3 | 🇨🇳 宽基3 | 🏭 行业3 | 🥇 贵金属2 | 🛢️ 大宗4 | 🌾 粮食3 | 📌 中概1+指定6")
     print(f"  📰 新闻事件: {len(major_events)}条 → 作为分析参考上下文\n")
 
     # 并发预测：所有标的都在同一线程池中竞争
@@ -352,6 +424,17 @@ def main():
         print(f"  ⚠️ Polymarket 黄金预测数据暂时不可用\n")
 
     print(f"\n{'─'*50}")
+    print(f"  大宗商品宏观背景")
+    print(f"{'─'*50}")
+    if commodity_macro_signal:
+        for line in commodity_macro_signal.split("\n"):
+            if line.startswith("- "):
+                print(f"  {line}")
+        print()
+    else:
+        print(f"  ⚠️ 大宗商品宏观背景数据暂时不可用\n")
+
+    print(f"\n{'─'*50}")
     print(f"  默认观察列表预测 | 账户资产: ¥{USER_BUDGET:,} | 全部可交易")
     print(f"{'─'*50}")
 
@@ -382,6 +465,7 @@ def main():
         "predicted_stocks": len(predictions),
         "predictions": predictions,
         "polymarket_gold": gold_poly_signal,
+        "commodity_macro": commodity_macro_signal,
     }
     os.makedirs(os.path.join(PROJECT_DIR, "news_aggregator", "reports"), exist_ok=True)
     summary_path = os.path.join(PROJECT_DIR, "news_aggregator", "reports", f"briefing_{now.strftime('%Y%m%d')}.json")

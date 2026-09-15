@@ -139,6 +139,14 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
         for row in screen["selected"]:
             divergence = row.get("order_divergence", {})
             lines.append(f"| {row['symbol']} | {_cell(row['name'])} | {_amount(row.get('main_net_inflow'))} | {_pct(row.get('main_net_inflow_pct'))} | {_cell(divergence.get('signal', 'no_data'))} | {_cell(divergence.get('factor'))} | {row['screen_score']:.4f} |")
+        lines.extend(["", "## 五档资金流拆解（冻结候选前10名）", "",
+                      "各档展示净额及净占比；缺失值保留为空，不视为零流入。成交单分类不等同基金申赎。", "",
+                      "| ETF | 主力净额/占比 | 超大单净额/占比 | 大单净额/占比 | 中单净额/占比 | 小单净额/占比 |",
+                      "|---|---|---|---|---|---|"])
+        for row in screen["selected"][:10]:
+            legs = [f"{_amount(row.get(leg + '_net_inflow'))} / {_pct(row.get(leg + '_net_inflow_pct'))}"
+                    for leg in ("main", "super_large", "large", "medium", "small")]
+            lines.append(f"| {row['symbol']} | " + " | ".join(legs) + " |")
         prediction_symbols = {row["symbol"] for row in predictions}
         if screen.get("opportunity_observation"):
             lines.extend(_observation_lines(screen["opportunity_observation"], screen["selected"], prediction_symbols,

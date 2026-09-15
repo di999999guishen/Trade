@@ -29,7 +29,7 @@ def score_asset(ticker: str, name: str = "", market: str = "港股") -> dict:
         
         config = DEFAULT_CONFIG.copy()
         config["llm_provider"] = "deepseek"
-        config["deep_think_llm"] = "deepseek-v4-flash"
+        config["deep_think_llm"] = "deepseek-v4-pro"
         config["quick_think_llm"] = "deepseek-v4-flash"
         config["output_language"] = "Chinese"
         config["max_debate_rounds"] = 1

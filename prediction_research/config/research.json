@@ -31,15 +31,17 @@
       "asset_classes": ["equity", "commodity", "multi_asset"],
       "min_amount": 5000000,
       "min_market_cap": 50000000,
-      "top_n": 20,
+      "top_n": null,
       "max_per_group": 1,
       "order_divergence_min_leg_pct": 1.0,
       "order_divergence_clip_pct": 15.0,
       "score_weights": {
-        "main_flow": 0.50,
-        "liquidity": 0.35,
-        "momentum": 0.15,
-        "order_divergence": 0.15
+        "main_flow": 0.30,
+        "liquidity": 0.25,
+        "momentum": 0.10,
+        "order_divergence": 0.10,
+        "flow_to_cap": 0.10,
+        "relative_strength": 0.15
       }
     }
   },

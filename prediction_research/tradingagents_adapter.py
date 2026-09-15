@@ -100,12 +100,21 @@ def build_plan(cfg: dict, top_n: int) -> dict:
                    "screen_score": row["screen_score"], "screen_group": row["screen_group"],
                    "asset_class": row["asset_class"], "subtype": row["subtype"],
                    "order_divergence": row.get("order_divergence", {"status": "missing_data", "signal": "no_data"}),
-                   "evidence_handoff_status": "available_in_plan_not_injected_into_current_upstream_cli"}
+                   "screen_evidence": {key: row.get(key) for key in (
+                       "price", "quote_epoch", "change_pct", "amount", "market_cap", "main_net_inflow",
+                       "main_net_inflow_pct", "super_large_net_inflow", "super_large_net_inflow_pct",
+                       "large_net_inflow", "large_net_inflow_pct", "medium_net_inflow", "medium_net_inflow_pct",
+                       "small_net_inflow", "small_net_inflow_pct", "screen_components", "screen_contributions", "relative_strength_context")},
+                   "opportunity_observation": next((item for item in screen.get("opportunity_observation", {}).get("rows", [])
+                                                    if item["symbol"] == row["symbol"]), None),
+                   "evidence_handoff_status": "will_inject_via_screen_evidence_cli"}
                   for row in screen["selected"][:top_n]]
     epochs = [int(row["quote_epoch"]) for row in screen["selected"] if row.get("quote_epoch")]
     china_time = timezone(timedelta(hours=8))
     trade_date = datetime.fromtimestamp(max(epochs), china_time).date().isoformat() if epochs else date.today().isoformat()
-    return {"screen_report": str(screen_path.resolve()), "project_dir": str(project), "project_available": (project / "main.py").exists(), "trade_date": trade_date, "candidates": candidates}
+    return {"screen_report": str(screen_path.resolve()), "source_snapshot": screen.get("source_snapshot"),
+            "decision_at_utc": screen.get("decision_at_utc"), "rule_hash": screen.get("rule_hash"),
+            "project_dir": str(project), "project_available": (project / "main.py").exists(), "trade_date": trade_date, "candidates": candidates}
 
 
 def run_tradingagents(cfg: dict, top_n: int) -> tuple[Path, dict]:
@@ -125,11 +134,20 @@ def run_tradingagents(cfg: dict, top_n: int) -> tuple[Path, dict]:
             items.append({**candidate, "status": "skipped_after_batch_failure", "returncode": None, "decision": None, "report_dir": str(target.resolve()), "error_class": stop_reason})
             continue
         command = [str(interpreter), "main.py", candidate["ticker"], "--date", plan["trade_date"], "--reports-dir", str(report_root), "--quiet"]
+        target.mkdir(parents=True, exist_ok=True)
+        evidence_path = target / "screen_evidence.json"
+        evidence = {"schema_version": 1, "trade_date": plan["trade_date"],
+                    "screen_report": plan["screen_report"], "source_snapshot": plan.get("source_snapshot"),
+                    "decision_at_utc": plan.get("decision_at_utc"), "rule_hash": plan.get("rule_hash"), **candidate}
+        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+        command.extend(["--screen-evidence", str(evidence_path.resolve())])
         completed = subprocess.run(command, cwd=project, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=int(cfg["tradingagents"]["timeout_seconds"]), env=os.environ.copy())
         stderr_tail = _safe_tail(completed.stderr)
         error_class = "authentication" if "Authentication" in stderr_tail or "401" in stderr_tail else "runtime" if completed.returncode else None
         item = {**candidate, "status": "ok" if completed.returncode == 0 else "failed", "returncode": completed.returncode, "decision": _decision(completed.stdout), "report_dir": str(target.resolve()), "error_class": error_class, "stdout_tail": _safe_tail(completed.stdout), "stderr_tail": stderr_tail}
         items.append(item)
+        item["evidence_handoff_status"] = "passed_to_cli"
+        item["evidence_path"] = str(evidence_path.resolve())
         if error_class == "authentication":
             stop_reason = error_class
     payload = {**plan, "run_type": "tradingagents_after_etf_screen", "created_at_utc": datetime.now(timezone.utc).isoformat(), "items": items}

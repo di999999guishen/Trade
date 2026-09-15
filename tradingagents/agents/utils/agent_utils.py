@@ -23,6 +23,7 @@ from tradingagents.agents.utils.news_data_tools import (
 )
 from tradingagents.agents.utils.prediction_markets_tools import get_prediction_markets
 from tradingagents.agents.utils.technical_indicators_tools import get_indicators
+from tradingagents.dataflows.eastmoney_data import resolve_cn_instrument_identity
 
 # Public surface: the data tools are imported here so agents and the graph
 # import them from one place, plus the instrument/language helpers defined below.
@@ -65,6 +66,20 @@ def get_language_instruction() -> str:
     return f" Write your entire response in {lang}."
 
 
+def opponent_argument_or_opening(text: str, opponent: str) -> str:
+    """Opponent's latest argument, or an explicit opening marker when empty.
+
+    The first speaker in each debate round receives an empty opponent response;
+    interpolating it into a "refute the opponent" prompt makes the model
+    fabricate the other side's position. Returning a clear "has not spoken yet"
+    marker instead lets it open with its own case (#1176).
+    """
+    text = (text or "").strip()
+    if text:
+        return text
+    return f"(The {opponent} has not spoken yet — open the debate with your own case.)"
+
+
 def _clean_identity_value(value: Any) -> str | None:
     """Return a trimmed string, or None for empty / placeholder-ish values."""
     if not isinstance(value, str):
@@ -94,6 +109,15 @@ def resolve_instrument_identity(ticker: str) -> dict:
     resolves for the same instrument the price path actually fetches (#983).
     """
     from tradingagents.dataflows.symbol_utils import normalize_symbol
+
+    # A股/港股标的优先走国内源解析名称（akshare/东方财富），避免 yfinance
+    # 对 A股 ETF 的限流与错误身份识别。
+    try:
+        cn_identity = resolve_cn_instrument_identity(ticker)
+        if cn_identity:
+            return cn_identity
+    except Exception as exc:  # noqa: BLE001 — fail open, fall through to yfinance
+        logger.debug("Could not resolve CN identity for %s: %s", ticker, exc)
 
     try:
         info = yf.Ticker(normalize_symbol(ticker)).info or {}

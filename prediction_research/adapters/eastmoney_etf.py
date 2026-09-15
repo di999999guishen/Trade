@@ -23,7 +23,7 @@ def fetch_etf_snapshot(output_dir: Path) -> dict:
         "pn": 1, "pz": 100, "po": 1, "np": 1,
         "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": 2, "invt": 2,
         "fid": "f12", "fs": "b:MK0021,b:MK0022,b:MK0023,b:MK0024,b:MK0827",
-        "fields": "f2,f3,f5,f6,f8,f10,f12,f13,f14,f20,f21,f62,f66,f69,f72,f75,f124,f184",
+        "fields": "f2,f3,f5,f6,f8,f10,f12,f13,f14,f20,f21,f62,f124,f184,f66,f69,f72,f75,f78,f81,f84,f87",
     }
     pages = []
     total = None
@@ -73,6 +73,8 @@ def fetch_etf_snapshot(output_dir: Path) -> dict:
             "main_net_inflow": row.get("f62"), "main_net_inflow_pct": row.get("f184"),
             "super_large_net_inflow": row.get("f66"), "super_large_net_inflow_pct": row.get("f69"),
             "large_net_inflow": row.get("f72"), "large_net_inflow_pct": row.get("f75"),
+            "medium_net_inflow": row.get("f78"), "medium_net_inflow_pct": row.get("f81"),
+            "small_net_inflow": row.get("f84"), "small_net_inflow_pct": row.get("f87"),
             "quote_epoch": row.get("f124"),
         }
         records.append(record)

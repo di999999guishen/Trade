@@ -32,7 +32,7 @@ Set-Location 'E:\Trade\TradingAgents'
 
 完整 cycle 自动执行快照、新闻、筛选、待跟踪行情、证据整合、历史资金流研究、5/20 日回测与预测、结算和报告，不需要逐阶段手工触发。
 
-粗筛仍冻结前20名，默认量化申请前20名，历史不合格的标的明确排除；可用子集满足训练条件后进入5/20日回测和预测。cycle JSON的 `requested_prediction_top_n`、`prediction_candidate_count`、`prediction_eligible_symbols` 和 `prediction_ids` 分别记录配置上限、申请数量、特征数据合格列表和实际冻结输出。
+粗筛冻结同指数／同赛道去重后的全部合格候选（默认无总数量上限），默认量化申请前20名，历史不合格的标的明确排除；可用子集满足训练条件后进入5/20日回测和预测。cycle JSON的 `requested_prediction_top_n`、`prediction_candidate_count`、`prediction_eligible_symbols` 和 `prediction_ids` 分别记录配置上限、申请数量、特征数据合格列表和实际冻结输出。
 
 ## 3. 每天先看哪些状态
 

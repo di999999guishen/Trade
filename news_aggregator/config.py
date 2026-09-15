@@ -12,17 +12,25 @@ STOCKS = {
         {"code": "300750", "name": "宁德时代"},
         {"code": "601318", "name": "中国平安"},
     ],
-    # 港股（5位代码）— 精简至核心持仓
+    # 港股（5位代码）— 精简至核心持仓 + 港股巨头
     "港股": [
         {"code": "00700", "name": "腾讯控股"},
         {"code": "09988", "name": "阿里巴巴"},
         {"code": "01810", "name": "小米集团"},
+        {"code": "03690", "name": "美团"},
+        {"code": "09618", "name": "京东"},
+        {"code": "01211", "name": "比亚迪"},
     ],
-    # 美股（股票代码）— 精简至核心持仓
+    # 美股（股票代码）— 核心持仓 + 科技巨头 + 美债ETF
     "美股": [
         {"code": "AAPL", "name": "苹果"},
         {"code": "NVDA", "name": "英伟达"},
         {"code": "MSFT", "name": "微软"},
+        {"code": "GOOGL", "name": "谷歌"},
+        {"code": "AMZN", "name": "亚马逊"},
+        {"code": "TSLA", "name": "特斯拉"},
+        {"code": "META", "name": "Meta"},
+        {"code": "TLT", "name": "20年美债ETF"},
     ],
 }
 
@@ -53,6 +61,9 @@ MAJOR_EVENT_KEYWORDS = [
     "resign", "appoint", "executive",
     # 回购/增减持
     "回购", "增持", "减持", "buyback", "repurchase",
+    # 宏观/利率/美债（大宗商品与美债预测相关）
+    "美债", "国债收益率", "利率", "美联储", "加息", "降息", "非农", "CPI", "PPI",
+    "treasury", "yield", "Fed", "rate cut", "rate hike", "FOMC", "inflation",
     # 其他重大
     "重大", "重要", "公告", "声明",
 ]

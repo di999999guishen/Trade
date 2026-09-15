@@ -116,6 +116,8 @@ def test_super_large_vs_large_divergence_is_separate_screen_factor(cfg):
 
 def test_missing_divergence_is_not_zero_and_preserves_original_score_weights(cfg):
     row = flow_row()
+    cfg["etf_market"]["screen"]["score_weights"] = {
+        "main_flow": 0.50, "liquidity": 0.35, "momentum": 0.15, "order_divergence": 0.15}
     eligible, _ = select_etfs([row], cfg["etf_market"]["screen"])
     assert eligible[0]["order_divergence"]["status"] == "missing_data"
     assert eligible[0]["screen_components"]["order_divergence"] is None

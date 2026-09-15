@@ -4,6 +4,7 @@ import json
 import math
 import hashlib
 import uuid
+import statistics
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -34,27 +35,36 @@ def _snapshot_path(directory: Path, manifest: dict) -> Path:
     raise FileNotFoundError(f"ETF snapshot not found at recorded or migrated path: {recorded}")
 
 
-def rule_identity(rules: dict, limit: int) -> str:
+def selection_limit(rules: dict, limit: int | None = None) -> int | None:
+    value = rules.get("top_n") if limit is None else limit
+    if value is None:
+        return None
+    value = int(value)
+    if value < 1:
+        raise ValueError("selection limit must be positive or null for unlimited")
+    return value
+
+
+def rule_identity(rules: dict, limit: int | None) -> str:
     return hashlib.sha256(json.dumps({"rules": rules, "selection_limit": limit,
-                                     "algorithm_version": 3}, sort_keys=True).encode("utf-8")).hexdigest()
+                                     "algorithm_version": 5}, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def select_etfs(records: list[dict], rules: dict, limit: int | None = None) -> tuple[list, list]:
-    selection_limit = int(limit or rules["top_n"])
-    if selection_limit < 1:
-        raise ValueError("selection limit must be positive")
+    cap = selection_limit(rules, limit)
     eligible = []
     for row in records:
         row = {**row, **classify_etf(row["name"]), "market_scope": market_scope(row["name"])}
-        amount = _number(row.get("amount"))
-        market_cap = _number(row.get("market_cap"))
-        price = _number(row.get("price"), -1)
-        if row["asset_class"] not in rules["asset_classes"] or amount < rules["min_amount"] or market_cap < rules["min_market_cap"] or price <= 0:
+        amount = finite(row.get("amount")) or 0.0
+        market_cap = finite(row.get("market_cap")) or 0.0
+        price = finite(row.get("price")) or -1.0
+        if row["asset_class"] not in rules["asset_classes"] or amount <= 0 or market_cap <= 0 or amount < rules["min_amount"] or market_cap < rules["min_market_cap"] or price <= 0:
             continue
         if finite(row.get("main_net_inflow_pct")) is None or finite(row.get("main_net_inflow")) is None:
             continue
         flow_pct = max(-30.0, min(30.0, _number(row.get("main_net_inflow_pct")))) / 30.0
-        momentum = max(-10.0, min(10.0, _number(row.get("change_pct")))) / 10.0
+        change = finite(row.get("change_pct"))
+        momentum = max(-10.0, min(10.0, change)) / 10.0 if change is not None else None
         liquidity = min(1.0, max(0.0, (math.log10(amount) - 6.0) / 4.0))
         divergence = order_divergence(row, rules)
         weights = {"flow": 0.50, "liquidity": 0.35, "momentum": 0.15,
@@ -64,23 +74,41 @@ def select_etfs(records: list[dict], rules: dict, limit: int | None = None) -> t
                         "liquidity": float(configured.get("liquidity", weights["liquidity"])),
                         "momentum": float(configured.get("momentum", weights["momentum"])),
                         "order_divergence": float(configured.get("order_divergence", weights["order_divergence"]))})
-        if any(value < 0 for value in weights.values()):
+        weights.update({name: float(configured.get(name, 0.0))
+                        for name in ("flow_to_cap", "relative_strength")})
+        if any(not math.isfinite(value) or value < 0 for value in weights.values()):
             raise ValueError("screen score weights cannot be negative")
         components = {"flow": flow_pct, "liquidity": liquidity, "momentum": momentum,
-                      "order_divergence": divergence["factor"]}
-        available = [name for name, value in components.items() if value is not None and weights[name] > 0]
-        denominator = sum(weights[name] for name in available)
+                      "order_divergence": divergence["factor"],
+                      "flow_to_cap": max(-1.0, min(1.0, row["main_net_inflow"] / market_cap / 0.01)),
+                      "relative_strength": None}
+        eligible.append({**row, "screen_group": screen_group(row["name"], row["subtype"]),
+                         "screen_components": components, "screen_weights": weights,
+                         "order_divergence": divergence})
+    # Compare only eligible instruments in the same asset class and market scope.
+    # A singleton has no relative-strength evidence; it must not receive a bonus.
+    peers = {}
+    for row in eligible:
+        change = finite(row.get("change_pct"))
+        if change is not None:
+            peers.setdefault((row["asset_class"], row["market_scope"]), []).append(change)
+    for row in eligible:
+        cohort = peers.get((row["asset_class"], row["market_scope"]), [])
+        change = finite(row.get("change_pct"))
+        baseline = statistics.median(cohort) if len(cohort) >= 3 else None
+        components, weights = row["screen_components"], row["screen_weights"]
+        components["relative_strength"] = (round(max(-1.0, min(1.0, (change - baseline) / 5.0)), 6)
+                                           if baseline is not None and change is not None else None)
+        row["relative_strength_context"] = {"peer_count": len(cohort), "median_change_pct": baseline,
+                                            "basis": "eligible_same_asset_class_and_market_scope"}
+        denominator = sum(weights[name] for name, value in components.items() if value is not None)
         if denominator <= 0:
             raise ValueError("screen score has no available positive-weight components")
-        contributions = {name: round(weights[name] * value / denominator, 6) if name in available else None
-                         for name, value in components.items()}
-        score = sum(value for value in contributions.values() if value is not None)
-        eligible.append({**row, "screen_group": screen_group(row["name"], row["subtype"]),
-                         "screen_score": round(score, 6),
-                         "screen_components": {name: round(value, 6) if value is not None else None
-                                               for name, value in components.items()},
-                         "screen_contributions": contributions, "screen_weights": weights,
-                         "order_divergence": divergence})
+        row["screen_contributions"] = {name: round(weights[name] * value / denominator, 6)
+                                        if value is not None else None for name, value in components.items()}
+        row["screen_components"] = {name: round(value, 6) if value is not None else None
+                                    for name, value in components.items()}
+        row["screen_score"] = round(sum(value for value in row["screen_contributions"].values() if value is not None), 6)
     eligible.sort(key=lambda row: (row["screen_score"], _number(row.get("amount"))), reverse=True)
     selected = []
     group_counts: dict[str, int] = {}
@@ -90,7 +118,7 @@ def select_etfs(records: list[dict], rules: dict, limit: int | None = None) -> t
             continue
         selected.append(row)
         group_counts[group] = group_counts.get(group, 0) + 1
-        if len(selected) >= selection_limit:
+        if cap is not None and len(selected) >= cap:
             break
     return eligible, selected
 
@@ -113,8 +141,8 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
         latest_quote_day = max(quote_day(row) for row in fresh)
         fresh = [row for row in fresh if quote_day(row) == latest_quote_day]
     rules = cfg["etf_market"]["screen"]
-    selection_limit = int(limit or rules["top_n"])
-    eligible, selected = select_etfs(fresh, rules, selection_limit)
+    cap = selection_limit(rules, limit)
+    eligible, selected = select_etfs(fresh, rules, cap)
     if not selected:
         raise ValueError("no eligible ETF candidates with fresh, complete money-flow data")
     observation = build_opportunity_observation(cfg, eligible, selected, manifest, decision.isoformat())
@@ -122,7 +150,7 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
         "run_type": "etf_money_flow_coarse_screen", "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "source_snapshot": manifest, "universe_records": len(snapshot["records"]), "eligible_records": len(eligible),
         "rules": rules,
-        "score_formula": "weighted mean of main flow, liquidity, momentum and available super-large-vs-large divergence; missing divergence is excluded from the denominator",
+        "score_formula": "weighted mean of available main flow, liquidity, momentum, order divergence, flow/market-cap (1% clip) and peer-relative daily strength (5 percentage-point clip); missing factors excluded; heuristic weights, not calibrated probabilities",
         "flow_caveat": snapshot["flow_definition"], "selected": selected,
         "decision_at_utc": decision.isoformat(), "fresh_records": len(fresh),
         "screen_freeze_policy": "first_daily_selection_wins",
@@ -137,12 +165,12 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
     runs = resolve_project_path(cfg, cfg["runs_dir"])
     runs.mkdir(parents=True, exist_ok=True)
     path = runs / f"screen_etf_flow_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
-    rule_hash = rule_identity(rules, selection_limit)
+    rule_hash = rule_identity(rules, cap)
     epochs = [int(row["quote_epoch"]) for row in selected if row.get("quote_epoch")]
     feature_date = datetime.fromtimestamp(max(epochs), timezone(timedelta(hours=8))).date().isoformat() if epochs else datetime.now().date().isoformat()
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
         connection.execute("INSERT OR IGNORE INTO screen_rule_versions VALUES (?, ?, ?)",
-                           (rule_hash, now_utc(), json.dumps({"rules": rules, "selection_limit": selection_limit}, sort_keys=True)))
+                           (rule_hash, now_utc(), json.dumps({"rules": rules, "selection_limit": cap}, sort_keys=True)))
         previous = connection.execute("SELECT payload_json FROM screen_batches WHERE feature_date=? AND rule_hash=?",
                                       (feature_date, rule_hash)).fetchone()
         if previous:
@@ -221,13 +249,16 @@ def ingest_etf_snapshot(cfg: dict, manifest: dict | None = None) -> dict:
                 """INSERT OR IGNORE INTO etf_flow_snapshots
                 (snapshot_sha256,symbol,exchange,name,quote_epoch,retrieved_at_utc,asset_class,subtype,market_scope,
                  price,change_pct,amount,market_cap,main_net_inflow,main_net_inflow_pct,
-                 super_large_net_inflow,super_large_net_inflow_pct,large_net_inflow,large_net_inflow_pct)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 super_large_net_inflow,super_large_net_inflow_pct,large_net_inflow,large_net_inflow_pct,
+                 medium_net_inflow,medium_net_inflow_pct,small_net_inflow,small_net_inflow_pct)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (manifest["sha256"], row["symbol"], row["exchange"], row["name"], row.get("quote_epoch"),
                  manifest["retrieved_at_utc"], row["asset_class"], row["subtype"], row["market_scope"],
                  row.get("price"), row.get("change_pct"), row.get("amount"), row.get("market_cap"),
                  row.get("main_net_inflow"), row.get("main_net_inflow_pct"), row.get("super_large_net_inflow"),
-                 row.get("super_large_net_inflow_pct"), row.get("large_net_inflow"), row.get("large_net_inflow_pct")),
+                 row.get("super_large_net_inflow_pct"), row.get("large_net_inflow"), row.get("large_net_inflow_pct"),
+                 row.get("medium_net_inflow"), row.get("medium_net_inflow_pct"),
+                 row.get("small_net_inflow"), row.get("small_net_inflow_pct")),
             )
             inserted += int(connection.total_changes > before)
         connection.commit()

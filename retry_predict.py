@@ -27,7 +27,7 @@ analysis_date = (now).strftime("%Y-%m-%d")
 
 config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "deepseek")
-config["deep_think_llm"] = "deepseek-v4-flash"
+config["deep_think_llm"] = "deepseek-v4-pro"
 config["quick_think_llm"] = "deepseek-v4-flash"
 config["output_language"] = "Chinese"
 config["max_debate_rounds"] = 1

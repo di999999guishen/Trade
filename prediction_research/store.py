@@ -144,6 +144,10 @@ CREATE TABLE IF NOT EXISTS etf_flow_snapshots (
   super_large_net_inflow_pct REAL,
   large_net_inflow REAL,
   large_net_inflow_pct REAL,
+  medium_net_inflow REAL,
+  medium_net_inflow_pct REAL,
+  small_net_inflow REAL,
+  small_net_inflow_pct REAL,
   PRIMARY KEY(snapshot_sha256, symbol)
 );
 CREATE TABLE IF NOT EXISTS screen_selections (
@@ -179,7 +183,9 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
         connection.executescript(SCHEMA)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(etf_flow_snapshots)")}
         for name in ("super_large_net_inflow", "super_large_net_inflow_pct",
-                     "large_net_inflow", "large_net_inflow_pct"):
+                     "large_net_inflow", "large_net_inflow_pct",
+                     "medium_net_inflow", "medium_net_inflow_pct",
+                     "small_net_inflow", "small_net_inflow_pct"):
             if name not in columns:
                 connection.execute(f"ALTER TABLE etf_flow_snapshots ADD COLUMN {name} REAL")
         connection.commit()

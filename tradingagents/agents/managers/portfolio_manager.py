@@ -62,7 +62,13 @@ def create_portfolio_manager(llm):
 
 ---
 
-Be decisive and ground every conclusion in specific evidence from the analysts.
+Ground every conclusion in specific evidence from the analysts. Commit to a direction only
+when supported; allow Hold for balanced, conflicting, ambiguous or insufficient evidence.
+Weigh the analysts on their merits, independent of speaking order.
+Do not treat missing data as bearish evidence or count repeated claims as independent evidence.
+Separate expected price direction from exposure changes. If no holdings or cost basis are
+provided, make holder actions conditional and do not invent an existing position or profits.
+For Hold, state whether the evidence is balanced or insufficient and what would change the rating.
 
 {NO_EXTERNAL_TOOLS}{get_language_instruction()}"""
 

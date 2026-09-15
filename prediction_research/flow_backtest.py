@@ -18,7 +18,8 @@ from .store import connect, record_run
 
 def reconstruct_screens(cfg: dict) -> dict:
     rules = cfg["etf_market"]["screen"]
-    limit = int(rules["top_n"])
+    from .screening import selection_limit
+    limit = selection_limit(rules)
     identity = rule_identity(rules, limit)
     zone = ZoneInfo(cfg.get("timezone", "Asia/Shanghai"))
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:

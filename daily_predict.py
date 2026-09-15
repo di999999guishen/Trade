@@ -2,7 +2,7 @@
 自动取最新交易日数据，分析个股走势方向，网络中断自动重试
 """
 import os, sys, json, time, logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -32,17 +32,35 @@ from tradingagents.default_config import DEFAULT_CONFIG
 
 # ---- 自动日期 ----
 today = datetime.now()
-analysis_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-ticker = os.getenv("DAILY_TICKER", "3032.HK")
+# 盘前（早 7:30 运行）：预测当日（today）走势，而非次日
+analysis_date = today.strftime("%Y-%m-%d")
+
+# ---- 分析标的 ----
+# 默认只跑 A 股标的（走新浪财经数据源，最省 API / 不受 Yahoo 限流拖慢）：
+#   510050.SS = 上证50ETF；515220.SS = 煤炭ETF国泰
+# 可用环境变量 DAILY_TICKER 以逗号分隔覆盖，如 "3032.HK,510050.SS"
+tickers = os.getenv("DAILY_TICKER", "510050.SS,515220.SS").split(",")
+tickers = [t.strip() for t in tickers if t.strip()]
 
 # ---- 配置 ----
 config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "deepseek")
-config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-flash")
+config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-pro")
 config["quick_think_llm"] = os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "deepseek-v4-flash")
 config["output_language"] = "Chinese"
 config["max_debate_rounds"] = 1
 config["max_risk_discuss_rounds"] = 1
+
+# 🔒 全程国内/不限流数据源（禁用 yfinance/Reddit/StockTwits/FRED 等限流源）
+# 东方财富/akshare 覆盖：个股新闻+全球快讯、中国宏观(CPI/PPI/PMI/M2/GDP/LPR)、ETF基本面
+config["data_vendors"] = {
+    "core_stock_apis": "akshare",
+    "technical_indicators": "akshare",
+    "fundamental_data": "eastmoney",
+    "news_data": "eastmoney",
+    "macro_data": "akshare_macro",
+    "prediction_markets": "polymarket",
+}
 
 # ---- 结果目录 ----
 results_dir = os.path.join(PROJECT_DIR, "results", "daily")
@@ -88,46 +106,57 @@ def run_prediction_with_retry(ticker: str, analysis_date: str) -> tuple:
 # ---- 主流程 ----
 print(f"\n{'='*60}")
 print(f"  运行时间: {today.strftime('%Y-%m-%d %H:%M')}")
-print(f"  分析标的: {ticker}")
+print(f"  分析标的: {', '.join(tickers)}")
 print(f"  分析日期: {analysis_date}")
 print(f"  LLM: {config['llm_provider']} | 模型: {config['deep_think_llm']}/{config['quick_think_llm']}")
 print(f"  最大重试: {MAX_RETRIES} 次")
 print(f"{'='*60}\n")
 
-try:
-    result, decision = run_prediction_with_retry(ticker, analysis_date)
+failed = []
+for i, ticker in enumerate(tickers, 1):
+    print(f"\n[{i}/{len(tickers)}] 开始分析 {ticker} ...")
+    try:
+        result, decision = run_prediction_with_retry(ticker, analysis_date)
 
-    # 保存结果
-    ts = today.strftime("%Y%m%d_%H%M")
-    report_file = os.path.join(results_dir, f"{ticker}_{ts}.md")
-    summary_file = os.path.join(results_dir, f"{ticker}_{ts}.json")
+        # 保存结果
+        ts = today.strftime("%Y%m%d_%H%M")
+        report_file = os.path.join(results_dir, f"{ticker}_{ts}.md")
+        summary_file = os.path.join(results_dir, f"{ticker}_{ts}.json")
 
-    with open(report_file, "w", encoding="utf-8") as f:
-        f.write(f"# {ticker} 每日预测\n\n")
-        f.write(f"- 运行时间: {today.strftime('%Y-%m-%d %H:%M')}\n")
-        f.write(f"- 分析日期: {analysis_date}\n")
-        f.write(f"- 最终决策: **{decision}**\n\n")
-        f.write("---\n\n")
-        f.write(str(result)[:5000])
+        with open(report_file, "w", encoding="utf-8") as f:
+            f.write(f"# {ticker} 每日预测\n\n")
+            f.write(f"- 运行时间: {today.strftime('%Y-%m-%d %H:%M')}\n")
+            f.write(f"- 分析日期: {analysis_date}\n")
+            f.write(f"- 最终决策: **{decision}**\n\n")
+            f.write("---\n\n")
+            f.write(str(result)[:5000])
 
-    with open(summary_file, "w", encoding="utf-8") as f:
-        json.dump({
-            "ticker": ticker,
-            "run_time": today.isoformat(),
-            "analysis_date": analysis_date,
-            "decision": decision
-        }, f, ensure_ascii=False, indent=2)
+        with open(summary_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "ticker": ticker,
+                "run_time": today.isoformat(),
+                "analysis_date": analysis_date,
+                "decision": decision
+            }, f, ensure_ascii=False, indent=2)
 
-    print(f"\n{'='*60}")
-    print(f"  ✅ 预测完成: {decision}")
-    print(f"  📄 报告: {report_file}")
-    print(f"  📊 摘要: {summary_file}")
-    print(f"{'='*60}")
+        print(f"\n{'='*60}")
+        print(f"  ✅ [{i}/{len(tickers)}] {ticker} 预测完成: {decision}")
+        print(f"  📄 报告: {report_file}")
+        print(f"  📊 摘要: {summary_file}")
+        print(f"{'='*60}")
 
-except Exception as e:
-    error_file = os.path.join(results_dir, f"error_{today.strftime('%Y%m%d_%H%M')}.log")
-    with open(error_file, "w", encoding="utf-8") as f:
-        f.write(f"Error at {today.isoformat()} after {MAX_RETRIES} retries:\n{type(e).__name__}: {e}\n")
-    print(f"\n❌ 运行失败（已重试 {MAX_RETRIES} 次）: {type(e).__name__}: {e}")
-    print(f"错误日志: {error_file}")
+    except Exception as e:
+        failed.append(ticker)
+        error_file = os.path.join(results_dir, f"error_{ticker}_{today.strftime('%Y%m%d_%H%M')}.log")
+        with open(error_file, "w", encoding="utf-8") as f:
+            f.write(f"Error at {today.isoformat()} after {MAX_RETRIES} retries:\n{type(e).__name__}: {e}\n")
+        print(f"\n❌ [{i}/{len(tickers)}] {ticker} 运行失败（已重试 {MAX_RETRIES} 次）: {type(e).__name__}: {e}")
+        print(f"错误日志: {error_file}")
+        # 单个标的失败不阻断后续标的，继续跑下一个
+        continue
+
+if failed:
+    print(f"\n⚠️  完成，{len(failed)}/{len(tickers)} 只标的失败: {', '.join(failed)}")
     sys.exit(1)
+else:
+    print(f"\n🎉 全部 {len(tickers)} 只标的预测完成。")

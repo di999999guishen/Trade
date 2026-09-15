@@ -36,7 +36,10 @@ def create_research_manager(llm):
 - **Underweight**: Cautious view; recommend trimming exposure
 - **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
 
-Commit to a clear stance whenever the debate's strongest arguments warrant one; reserve Hold for situations where the evidence on both sides is genuinely balanced.
+Commit to a clear stance when supported. Hold can mean balanced evidence or insufficient evidence;
+explicitly distinguish these reasons. Missing data is not bearish evidence. Do not invent holdings.
+Allow Hold for materially conflicting or ambiguous evidence. Weigh the bull and bear cases
+on their merits, independent of which side spoke first or last.
 
 ---
 

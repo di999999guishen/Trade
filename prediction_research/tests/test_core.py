@@ -11,7 +11,7 @@ from prediction_research.evaluation import walk_forward
 from prediction_research.events import _published_at, _rss_items, _score
 from prediction_research.features import build_samples
 from prediction_research.store import connect, insert_prediction
-from prediction_research.taxonomy import classify_etf, market_scope
+from prediction_research.taxonomy import classify_etf, market_scope, screen_group
 from prediction_research.tradingagents_adapter import decision_direction
 
 
@@ -79,6 +79,24 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(classify_etf("国债ETF")["asset_class"], "bond")
         self.assertEqual(classify_etf("沪深300ETF")["subtype"], "broad_market")
         self.assertEqual(market_scope("恒生科技ETF"), "cross_border")
+
+    def test_screen_group_dedupes_same_theme_across_fund_companies(self):
+        # 同一主题（创新药/半导体）不同基金公司须归同一组，保证粗筛 max_per_group 去重生效
+        self.assertEqual(screen_group("创新药ETF富国", "thematic"), screen_group("创新药ETF银华", "thematic"))
+        self.assertEqual(screen_group("半导体ETF博时", "thematic"), screen_group("半导体ETF华夏", "thematic"))
+        # 不同主题须保持不同组
+        self.assertNotEqual(screen_group("创新药ETF富国", "thematic"), screen_group("半导体ETF博时", "thematic"))
+        # keyword 分组不受基金公司名剥离影响
+        self.assertEqual(screen_group("证券ETF国泰", "sector"), "finance")
+        self.assertEqual(screen_group("农业ETF富国", "thematic"), "agriculture")
+
+    def test_screen_group_merges_same_index_and_same_track(self):
+        # 同指数：宽基增强型与普通型归并到同一指数
+        self.assertEqual(screen_group("中证2000ETF", "broad_market"), "index:中证2000")
+        self.assertEqual(screen_group("中证2000增强ETF", "strategy_factor"), screen_group("中证2000ETF", "broad_market"))
+        # 同赛道：医药医疗类不同叫法归并到同一赛道
+        self.assertEqual(screen_group("生物科技ETF易方达", "thematic"), screen_group("生物医药ETF华安", "sector"))
+        self.assertEqual(screen_group("创新药ETF富国", "thematic"), "pharma")
 
     def test_agent_decision_direction_is_not_a_probability(self):
         self.assertEqual(decision_direction("BUY"), "up")

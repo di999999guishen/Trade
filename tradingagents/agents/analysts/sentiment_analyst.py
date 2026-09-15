@@ -48,6 +48,21 @@ def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
 
 
+_CN_SUFFIXES = (".SS", ".SZ", ".BJ", ".HK")
+
+
+def _is_cn_ticker(ticker: str) -> bool:
+    """Return True for A-share / HK tickers, which have no Reddit/StockTwits data."""
+    upper = (ticker or "").upper()
+    return any(upper.endswith(s) for s in _CN_SUFFIXES)
+
+
+_CN_SENTIMENT_PLACEHOLDER = (
+    "不适用：该标的为 A股/港股 上市代码，无 Reddit/StockTwits 等海外散户社区数据。"
+    "情绪判断应主要依据新闻面与资金流。"
+)
+
+
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
@@ -68,8 +83,18 @@ def create_sentiment_analyst(llm):
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
+        # A股/港股标的没有 Reddit/StockTwits 海外散户数据，直连会触发 429/404
+        # 限流（Reddit 429、StockTwits 对非美股 404）。跳过并注入占位说明，
+        # 避免拖慢整条预测链路。非 A股标的沿用上游 v0.4.0 带窗口的调用，
+        # 以对齐 social look-ahead 修复（#1220）。
+        if _is_cn_ticker(ticker):
+            stocktwits_block = _CN_SENTIMENT_PLACEHOLDER
+            reddit_block = _CN_SENTIMENT_PLACEHOLDER
+        else:
+            stocktwits_block = fetch_stocktwits_messages(
+                ticker, limit=30, start_date=start_date, end_date=end_date
+            )
+            reddit_block = fetch_reddit_posts(ticker, start_date=start_date, end_date=end_date)
 
         system_message = _build_system_message(
             ticker=ticker,

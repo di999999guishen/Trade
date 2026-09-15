@@ -52,16 +52,12 @@ class PortfolioRating(str, Enum):
 
 
 class TraderAction(str, Enum):
-    """3-tier transaction direction used by the Trader.
-
-    The Trader's job is to translate the Research Manager's investment plan
-    into a concrete transaction proposal: should the desk execute a Buy, a
-    Sell, or sit on Hold this round.  Position sizing and the nuanced
-    Overweight / Underweight calls happen later at the Portfolio Manager.
-    """
+    """Five-tier action scale shared with research and portfolio management."""
 
     BUY = "Buy"
+    OVERWEIGHT = "Overweight"
     HOLD = "Hold"
+    UNDERWEIGHT = "Underweight"
     SELL = "Sell"
 
 
@@ -82,9 +78,11 @@ class ResearchPlan(BaseModel):
     recommendation: PortfolioRating = Field(
         description=(
             "The investment recommendation. Exactly one of Buy / Overweight / "
-            "Hold / Underweight / Sell. Reserve Hold for situations where the "
-            "evidence on both sides is genuinely balanced; otherwise commit to "
-            "the side with the stronger arguments."
+            "Hold / Underweight / Sell. Choose Hold when the evidence is "
+            "balanced, materially conflicting, ambiguous, or insufficient to "
+            "justify changing exposure; otherwise commit to the side with the "
+            "clearly stronger arguments. Do not pick a direction merely to be "
+            "decisive."
         ),
     )
     rationale: str = Field(
@@ -128,7 +126,7 @@ class TraderProposal(BaseModel):
     """
 
     action: TraderAction = Field(
-        description="The transaction direction. Exactly one of Buy / Hold / Sell.",
+        description="The action. Exactly one of Buy / Overweight / Hold / Underweight / Sell.",
     )
     reasoning: str = Field(
         description=(
@@ -197,7 +195,10 @@ class PortfolioDecision(BaseModel):
     rating: PortfolioRating = Field(
         description=(
             "The final position rating. Exactly one of Buy / Overweight / Hold / "
-            "Underweight / Sell, picked based on the analysts' debate."
+            "Underweight / Sell, picked based on the analysts' debate. Choose "
+            "Hold when the case is balanced, materially conflicting, ambiguous, "
+            "or insufficient to justify changing exposure, rather than forcing a "
+            "direction to appear decisive."
         ),
     )
     executive_summary: str = Field(
