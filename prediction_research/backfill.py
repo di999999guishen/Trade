@@ -103,6 +103,10 @@ def run_backfill(cfg: dict) -> dict:
     for row in before:
         targets.setdefault(row["symbol"], row)
     targets = list(targets.values())
+    report["targets_total"] = len(targets)
+    # Persist the plan before the slow fetch so the run is observable while it
+    # works rather than only once it finishes.
+    persist()
 
     if targets:
         refresh = fetch_universe(targets, market_data_dir(cfg))

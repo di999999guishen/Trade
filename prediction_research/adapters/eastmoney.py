@@ -104,13 +104,13 @@ def fetch_universe(assets: list[dict], output_dir: Path, trip_after: int = 3,
                     paused = True
                     countdown = reprobe_every
                     print(f"[eastmoney] primary provider paused after {consecutive_failures} consecutive "
-                          f"failures; routing the next {reprobe_every} symbols to sina", file=sys.stderr)
+                          f"failures; routing the next {reprobe_every} symbols to sina", file=sys.stderr, flush=True)
             else:
                 consecutive_failures = 0
                 if paused:
                     paused = False
                     countdown = 0
-                    print("[eastmoney] primary provider recovered; preferring eastmoney again", file=sys.stderr)
+                    print("[eastmoney] primary provider recovered; preferring eastmoney again", file=sys.stderr, flush=True)
         else:
             primary_error = "skipped: primary provider paused after repeated failures"
             skipped_primary += 1
