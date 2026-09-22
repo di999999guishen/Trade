@@ -70,6 +70,20 @@ Separate expected price direction from exposure changes. If no holdings or cost 
 provided, make holder actions conditional and do not invent an existing position or profits.
 For Hold, state whether the evidence is balanced or insufficient and what would change the rating.
 
+**Executable price block (mandatory whenever any price structure is available):**
+- current_price: the latest traded price the other levels are anchored to. Copy it from the
+  evidence; never estimate it.
+- support_levels / resistance_levels: 2-4 absolute prices below / above current_price,
+  nearest first. Carry the trader's levels unless the risk debate justifies moving them.
+- entry_zone: where a holder buys or adds, plus the confirmation required.
+- stop_loss: the single hard stop below current_price, stated as an absolute price.
+- reduce_trigger: the observable condition that forces a trim before the stop is hit.
+- scale_out_ladder: 2-4 staged rungs, each an absolute trigger_price plus the close_pct of the
+  original position to close there; the percentages must sum to 100 or less. A full-exit
+  rating should clear the position in one or two rungs.
+If the evidence genuinely contains no price structure, leave these fields null and say so in
+the thesis — do not invent numbers.
+
 {NO_EXTERNAL_TOOLS}{get_language_instruction()}"""
 
         final_trade_decision = invoke_structured_or_freetext(

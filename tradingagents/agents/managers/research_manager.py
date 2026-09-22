@@ -41,6 +41,12 @@ explicitly distinguish these reasons. Missing data is not bearish evidence. Do n
 Allow Hold for materially conflicting or ambiguous evidence. Weigh the bull and bear cases
 on their merits, independent of which side spoke first or last.
 
+In **strategic_actions**, give the trader a concrete level map, not just direction: name the
+reference support and resistance prices quoted by the analysts (absolute prices, not
+percentages), the price or condition that would invalidate the thesis, and how the position
+should be scaled in and out. Only cite levels that appear in the analyst evidence; say
+"levels unavailable" when the evidence has no price structure.
+
 ---
 
 **Debate History:**

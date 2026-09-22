@@ -37,10 +37,22 @@ def create_trader(llm):
                 "Ground concrete price levels (entry, stop-loss, position sizing) in the technical "
                 "market report's price structure -- current price, support/resistance, ATR, and "
                 "volatility -- and use the research plan for direction and strategy. "
+                "You MUST also fill the price-structure block: current_price (copied from the "
+                "report, never estimated), support_levels (2-4 prices below current price, "
+                "nearest first), resistance_levels (2-4 prices above current price, nearest "
+                "first), invalidation_price (nearest support minus a small ATR-scaled buffer), "
+                "and scale_out_ladder (2-4 rungs, each an absolute trigger_price plus the "
+                "close_pct of the original position to sell there, summing to 100 or less). "
+                "Use the same quote currency as the report. If the report carries no usable "
+                "price structure, leave those fields null instead of inventing numbers. "
             )
             report_section = f"Technical Market Report:\n{market_report}\n\n"
         else:
-            grounding = ""
+            grounding = (
+                "No technical market report is available, so leave current_price, "
+                "support_levels, resistance_levels, invalidation_price and scale_out_ladder "
+                "null rather than inventing price levels. "
+            )
             report_section = ""
 
         messages = [
@@ -63,7 +75,9 @@ def create_trader(llm):
                     f"{instrument_context}\n\n"
                     f"{report_section}"
                     f"Proposed Investment Plan:\n{investment_plan}\n\n"
-                    f"Make an informed, strategic trading decision."
+                    f"Make an informed, strategic trading decision, and return the full "
+                    f"price-structure block (current price, support/resistance, entry, "
+                    f"stop-loss, invalidation price, staged scale-out ladder)."
                 ),
             },
         ]

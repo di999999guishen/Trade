@@ -62,6 +62,69 @@ class TraderAction(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# Price-level / exit-plan building blocks
+# ---------------------------------------------------------------------------
+
+
+class ScaleOutStep(BaseModel):
+    """One rung of the staged profit-taking / position-clearing ladder.
+
+    The ladder answers "at what price do I sell how much?" so a plan is
+    executable without a second decision round: each rung names the trigger
+    price and the share of the ORIGINAL position to close there.
+    """
+
+    trigger_price: float = Field(
+        description=(
+            "Price level in the instrument's quote currency that triggers this "
+            "rung. Must be an absolute price, not a percentage or a range."
+        ),
+    )
+    close_pct: float = Field(
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Percentage of the ORIGINAL position to close at this rung (0-100). "
+            "All rungs together must not exceed 100."
+        ),
+    )
+    condition: str | None = Field(
+        default=None,
+        description=(
+            "Optional execution condition for this rung, e.g. 'only if volume "
+            "expands' or 'needs a daily close above the level'. Leave null when "
+            "the rung is an unconditional limit order."
+        ),
+    )
+
+    @field_validator("trigger_price", "close_pct", mode="before")
+    @classmethod
+    def _nullish_float_to_none(cls, v):
+        return _coerce_optional_float(v)
+
+
+def _format_levels(levels: list[float] | None) -> str | None:
+    """Render a level list as ``a / b / c`` (drop placeholders, keep order)."""
+    if not levels:
+        return None
+    cleaned = [f"{level:g}" for level in levels if isinstance(level, (int, float))]
+    return " / ".join(cleaned) if cleaned else None
+
+
+def _render_ladder(ladder: list[ScaleOutStep] | None) -> list[str]:
+    """Render the staged exit ladder as a markdown table block."""
+    if not ladder:
+        return []
+    rows = ["**Scale-out Ladder** (close % is of the original position):", "",
+            "| Rung | Trigger Price | Close % | Condition |",
+            "| --- | --- | --- | --- |"]
+    for index, step in enumerate(ladder, start=1):
+        condition = (step.condition or "-").replace("|", "/").strip() or "-"
+        rows.append(f"| {index} | {step.trigger_price:g} | {step.close_pct:g} | {condition} |")
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Research Manager
 # ---------------------------------------------------------------------------
 
@@ -146,8 +209,48 @@ class TraderProposal(BaseModel):
         default=None,
         description="Optional sizing guidance, e.g. '5% of portfolio'.",
     )
+    current_price: float | None = Field(
+        default=None,
+        description=(
+            "Latest traded price used to anchor every other level. Copy it from "
+            "the technical market report / verified snapshot; never estimate it."
+        ),
+    )
+    support_levels: list[float] | None = Field(
+        default=None,
+        description=(
+            "Two to four support prices BELOW the current price, nearest first. "
+            "Derive from the report's price structure (moving averages, prior "
+            "swing lows, Bollinger bands, round numbers) and state them as "
+            "absolute prices."
+        ),
+    )
+    resistance_levels: list[float] | None = Field(
+        default=None,
+        description=(
+            "Two to four resistance prices ABOVE the current price, nearest "
+            "first, derived the same way as support_levels."
+        ),
+    )
+    invalidation_price: float | None = Field(
+        default=None,
+        description=(
+            "The price at which the trade thesis is considered dead (usually the "
+            "nearest support minus a small buffer). Either invalidation_price or "
+            "stop_loss must be filled whenever a directional action is proposed."
+        ),
+    )
+    scale_out_ladder: list[ScaleOutStep] | None = Field(
+        default=None,
+        description=(
+            "Two to four staged profit-taking rungs for a NEW position, ordered "
+            "from nearest to furthest target. close_pct across all rungs must sum "
+            "to 100 or less. Omit for a Hold with no position."
+        ),
+    )
 
-    @field_validator("entry_price", "stop_loss", mode="before")
+    @field_validator("entry_price", "stop_loss", "current_price", "invalidation_price",
+                     mode="before")
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
@@ -167,10 +270,23 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
     ]
     if proposal.entry_price is not None:
         parts.extend(["", f"**Entry Price**: {proposal.entry_price}"])
+    if proposal.current_price is not None:
+        parts.extend(["", f"**Current Price**: {proposal.current_price}"])
     if proposal.stop_loss is not None:
         parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
+    if proposal.invalidation_price is not None:
+        parts.extend(["", f"**Invalidation Price**: {proposal.invalidation_price}"])
+    support = _format_levels(proposal.support_levels)
+    if support:
+        parts.extend(["", f"**Support Levels** (nearest first): {support}"])
+    resistance = _format_levels(proposal.resistance_levels)
+    if resistance:
+        parts.extend(["", f"**Resistance Levels** (nearest first): {resistance}"])
     if proposal.position_sizing:
         parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
+    ladder = _render_ladder(proposal.scale_out_ladder)
+    if ladder:
+        parts.extend(["", *ladder])
     parts.extend([
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
@@ -222,8 +338,65 @@ class PortfolioDecision(BaseModel):
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
+    current_price: float | None = Field(
+        default=None,
+        description=(
+            "Latest traded price that every other level below is anchored to. "
+            "Copy it from the analyst evidence; never estimate it."
+        ),
+    )
+    support_levels: list[float] | None = Field(
+        default=None,
+        description=(
+            "Two to four support prices BELOW current_price, nearest first, in "
+            "absolute quote currency. Carry them over from the trader plan unless "
+            "the risk debate justifies moving them, and say so in the thesis."
+        ),
+    )
+    resistance_levels: list[float] | None = Field(
+        default=None,
+        description=(
+            "Two to four resistance prices ABOVE current_price, nearest first, in "
+            "absolute quote currency."
+        ),
+    )
+    entry_zone: str | None = Field(
+        default=None,
+        description=(
+            "Where a holder should BUY or ADD, and under what confirmation, e.g. "
+            "'1.240-1.255 on a daily close back above 10EMA; skip if it gaps "
+            "straight to 1.30'. Leave null when the rating forbids adding."
+        ),
+    )
+    stop_loss: float | None = Field(
+        default=None,
+        description=(
+            "The single hard stop price for the position. Must sit below "
+            "current_price for a long. Fill it for every actionable rating "
+            "(Buy / Overweight / Hold-with-position / Underweight); use null only "
+            "when no position is held."
+        ),
+    )
+    scale_out_ladder: list[ScaleOutStep] | None = Field(
+        default=None,
+        description=(
+            "Staged profit-taking / position-clearing ladder for the EXISTING or "
+            "intended position: two to four rungs ordered nearest-first, each with "
+            "an absolute trigger price and the percent of the original position to "
+            "close. close_pct must sum to 100 or less. For a full exit rating, make "
+            "a single rung (or two) that clears 100%."
+        ),
+    )
+    reduce_trigger: str | None = Field(
+        default=None,
+        description=(
+            "The observable condition that forces a reduction before the stop is "
+            "hit, e.g. 'two consecutive closes below 1.255' or 'main outflow "
+            "exceeds 5% of turnover for two sessions'."
+        ),
+    )
 
-    @field_validator("price_target", mode="before")
+    @field_validator("price_target", "current_price", "stop_loss", mode="before")
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
@@ -248,6 +421,23 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
         parts.extend(["", f"**Price Target**: {decision.price_target}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
+    if decision.current_price is not None:
+        parts.extend(["", f"**Current Price**: {decision.current_price}"])
+    support = _format_levels(decision.support_levels)
+    if support:
+        parts.extend(["", f"**Support Levels** (nearest first): {support}"])
+    resistance = _format_levels(decision.resistance_levels)
+    if resistance:
+        parts.extend(["", f"**Resistance Levels** (nearest first): {resistance}"])
+    if decision.entry_zone:
+        parts.extend(["", f"**Entry / Add Zone**: {decision.entry_zone}"])
+    if decision.stop_loss is not None:
+        parts.extend(["", f"**Stop Loss**: {decision.stop_loss}"])
+    if decision.reduce_trigger:
+        parts.extend(["", f"**Reduce Trigger**: {decision.reduce_trigger}"])
+    ladder = _render_ladder(decision.scale_out_ladder)
+    if ladder:
+        parts.extend(["", *ladder])
     return "\n".join(parts)
 
 
