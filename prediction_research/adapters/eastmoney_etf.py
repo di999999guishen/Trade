@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import urllib.parse
 import urllib.request
 import time
@@ -19,6 +20,23 @@ URLS = (
 
 
 def fetch_etf_snapshot(output_dir: Path) -> dict:
+    """Primary path: Eastmoney push2 quote boards. Falls back to Sina on failure.
+
+    The fallback is a declared degradation, never a silent one: the resulting
+    snapshot carries a machine-readable ``fallback`` block naming the degraded
+    fields, and the reason is logged to stderr.
+    """
+    try:
+        return _fetch_eastmoney_snapshot(output_dir)
+    except Exception as exc:  # noqa: BLE001 - fallback is the whole point
+        from .sina_etf import fetch_etf_snapshot as fetch_sina_snapshot
+
+        reason = f"eastmoney snapshot failed: {type(exc).__name__}: {exc}"
+        print(f"[eastmoney_etf] {reason}; falling back to Sina (DEGRADED)", file=sys.stderr)
+        return fetch_sina_snapshot(output_dir, fallback_reason=reason)
+
+
+def _fetch_eastmoney_snapshot(output_dir: Path) -> dict:
     params = {
         "pn": 1, "pz": 100, "po": 1, "np": 1,
         "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": 2, "invt": 2,
