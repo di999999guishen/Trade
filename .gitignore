@@ -226,3 +226,8 @@ reports/
 .git-rewrite/
 .workbuddy/
 results/daily/
+
+# One-off probe scripts and snapshots used for manual data investigation.
+# These are throwaway diagnostics, not reusable pipeline code.
+tmp_*.py
+tmp_*.csv
