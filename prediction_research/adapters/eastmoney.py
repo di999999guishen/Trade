@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -65,24 +66,69 @@ def fetch_daily(symbol: str, output_dir: Path, start: str = "20100101", end: str
     return {"symbol": symbol, "rows": len(rows), "start": rows[0]["date"], "end": rows[-1]["date"], "path": str(path.resolve()), "provider_name": data.get("name")}
 
 
-def fetch_universe(assets: list[dict], output_dir: Path) -> dict:
+def fetch_universe(assets: list[dict], output_dir: Path, trip_after: int = 3,
+                   reprobe_every: int = 50, interval: float = 1.0) -> dict:
+    """Refresh daily bars for every asset, preferring Eastmoney with a Sina fallback.
+
+    Eastmoney's push2his endpoint can be refused at the WAF level for the local
+    egress address. A refused request still costs the whole retry ladder in
+    `fetch_daily` (~12s of backoff), so a backlog of a few hundred symbols turns
+    into hours. After `trip_after` consecutive primary failures the circuit opens
+    and the remaining symbols go straight to Sina, with one re-probe every
+    `reprobe_every` symbols so a recovered provider is picked up mid-run instead
+    of staying disabled until the process restarts.
+    """
     successes, failures = [], {}
+    consecutive_failures = 0
+    paused = False
+    countdown = 0
+    skipped_primary = 0
     for asset in assets:
         symbol = asset["symbol"]
-        try:
-            successes.append(fetch_daily(symbol, output_dir))
-        except Exception as exc:
-            eastmoney_error = f"{type(exc).__name__}: {exc}"
+        use_primary = True
+        if paused:
+            if countdown > 0:
+                countdown -= 1
+                use_primary = False
+            else:
+                countdown = reprobe_every
+        result = None
+        primary_error = None
+        if use_primary:
+            try:
+                result = fetch_daily(symbol, output_dir)
+            except Exception as exc:
+                primary_error = f"{type(exc).__name__}: {exc}"
+                consecutive_failures += 1
+                if not paused and consecutive_failures >= trip_after:
+                    paused = True
+                    countdown = reprobe_every
+                    print(f"[eastmoney] primary provider paused after {consecutive_failures} consecutive "
+                          f"failures; routing the next {reprobe_every} symbols to sina", file=sys.stderr)
+            else:
+                consecutive_failures = 0
+                if paused:
+                    paused = False
+                    countdown = 0
+                    print("[eastmoney] primary provider recovered; preferring eastmoney again", file=sys.stderr)
+        else:
+            primary_error = "skipped: primary provider paused after repeated failures"
+            skipped_primary += 1
+        if result is not None:
+            successes.append(result)
+        else:
             try:
                 from .sina import fetch_daily as fetch_sina_daily
 
-                result = fetch_sina_daily(symbol, output_dir)
-                result["fallback_from"] = "eastmoney_push2his"
-                successes.append(result)
+                fallback = fetch_sina_daily(symbol, output_dir)
+                fallback["fallback_from"] = "eastmoney_push2his"
+                successes.append(fallback)
             except Exception as fallback_exc:
                 failures[symbol] = {
-                    "eastmoney": eastmoney_error,
+                    "eastmoney": primary_error,
                     "sina": f"{type(fallback_exc).__name__}: {fallback_exc}",
                 }
-        time.sleep(1.0)
-    return {"provider_chain": ["eastmoney_push2his", "sina_kline"], "successes": successes, "failures": failures}
+        time.sleep(interval)
+    return {"provider_chain": ["eastmoney_push2his", "sina_kline"], "successes": successes,
+            "failures": failures, "primary_provider_paused": paused,
+            "primary_provider_skipped": skipped_primary}

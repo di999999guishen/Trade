@@ -30,6 +30,7 @@ def parser() -> argparse.ArgumentParser:
     cycle = commands.add_parser("cycle", help="run the end-to-end research workflow")
     cycle.add_argument("--top", type=int, default=None, help="prediction candidate cap; default from workflow.prediction_top_n (20)")
     cycle.add_argument("--skip-fetch", action="store_true", help="reuse frozen network snapshots")
+    commands.add_parser("backfill", help="post-close refresh and settlement of unfinished histories")
     archive = commands.add_parser("archive-cycle", help="archive or verify the immutable backup of a saved cycle")
     archive.add_argument("path")
     verify = commands.add_parser("verify-archive", help="check every archived file hash and the database integrity")
@@ -138,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
             from .cycle import run_cycle
 
             result = run_cycle(cfg, args.top, args.skip_fetch)
+        elif args.command == "backfill":
+            from .backfill import run_backfill
+
+            result = run_backfill(cfg)
         elif args.command == "fetch":
             universe = cfg["universes"].get(args.universe)
             if not universe:
