@@ -28,9 +28,10 @@ def score_asset(ticker: str, name: str = "", market: str = "港股") -> dict:
         load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
         
         config = DEFAULT_CONFIG.copy()
-        config["llm_provider"] = "deepseek"
-        config["deep_think_llm"] = "deepseek-v4-pro"
-        config["quick_think_llm"] = "deepseek-v4-flash"
+        config["llm_provider"] = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "deepseek")
+        # 2026-09-21：统一使用本地配置的 flash 模型（原为 deepseek-v4-pro）
+        config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-flash")
+        config["quick_think_llm"] = os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "deepseek-v4-flash")
         config["output_language"] = "Chinese"
         config["max_debate_rounds"] = 1
         config["max_risk_discuss_rounds"] = 1

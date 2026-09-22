@@ -3,6 +3,7 @@
 """
 import os, sys, json, time, logging
 from datetime import datetime
+from daily_artifacts import new_run_id, save_daily_result
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -14,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(PROJECT_DIR, ".env"))
 
 # 日志配置
+os.makedirs(os.path.join(PROJECT_DIR, "logs"), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -32,6 +34,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 
 # ---- 自动日期 ----
 today = datetime.now()
+run_id = new_run_id(today)
 # 盘前（早 7:30 运行）：预测当日（today）走势，而非次日
 analysis_date = today.strftime("%Y-%m-%d")
 
@@ -45,7 +48,7 @@ tickers = [t.strip() for t in tickers if t.strip()]
 # ---- 配置 ----
 config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "deepseek")
-config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-pro")
+config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-flash")
 config["quick_think_llm"] = os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "deepseek-v4-flash")
 config["output_language"] = "Chinese"
 config["max_debate_rounds"] = 1
@@ -119,25 +122,8 @@ for i, ticker in enumerate(tickers, 1):
         result, decision = run_prediction_with_retry(ticker, analysis_date)
 
         # 保存结果
-        ts = today.strftime("%Y%m%d_%H%M")
-        report_file = os.path.join(results_dir, f"{ticker}_{ts}.md")
-        summary_file = os.path.join(results_dir, f"{ticker}_{ts}.json")
-
-        with open(report_file, "w", encoding="utf-8") as f:
-            f.write(f"# {ticker} 每日预测\n\n")
-            f.write(f"- 运行时间: {today.strftime('%Y-%m-%d %H:%M')}\n")
-            f.write(f"- 分析日期: {analysis_date}\n")
-            f.write(f"- 最终决策: **{decision}**\n\n")
-            f.write("---\n\n")
-            f.write(str(result)[:5000])
-
-        with open(summary_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "ticker": ticker,
-                "run_time": today.isoformat(),
-                "analysis_date": analysis_date,
-                "decision": decision
-            }, f, ensure_ascii=False, indent=2)
+        report_file, summary_file = save_daily_result(
+            results_dir, ticker, run_id, today, analysis_date, result, decision)
 
         print(f"\n{'='*60}")
         print(f"  ✅ [{i}/{len(tickers)}] {ticker} 预测完成: {decision}")
@@ -147,7 +133,7 @@ for i, ticker in enumerate(tickers, 1):
 
     except Exception as e:
         failed.append(ticker)
-        error_file = os.path.join(results_dir, f"error_{ticker}_{today.strftime('%Y%m%d_%H%M')}.log")
+        error_file = os.path.join(results_dir, f"error_{ticker}_{run_id}.log")
         with open(error_file, "w", encoding="utf-8") as f:
             f.write(f"Error at {today.isoformat()} after {MAX_RETRIES} retries:\n{type(e).__name__}: {e}\n")
         print(f"\n❌ [{i}/{len(tickers)}] {ticker} 运行失败（已重试 {MAX_RETRIES} 次）: {type(e).__name__}: {e}")
