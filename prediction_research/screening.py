@@ -35,6 +35,96 @@ def _snapshot_path(directory: Path, manifest: dict) -> Path:
     raise FileNotFoundError(f"ETF snapshot not found at recorded or migrated path: {recorded}")
 
 
+MONEY_MARKET_ATR_WINDOW = 14
+MONEY_MARKET_DEFAULT_MAX_ATR_PCT = 0.05
+MONEY_MARKET_DEFAULT_PRICE_BAND = 0.5
+
+
+def atr14_pct(bars, as_of=None) -> float | None:
+    """Average true range over the last 14 bars, as a percentage of the last close.
+
+    Returns None when the point-in-time window is too short to compute it. The
+    caller must treat None as "unknown", never as zero volatility.
+    """
+    window = [bar for bar in bars if as_of is None or bar.trading_date <= as_of]
+    needed = MONEY_MARKET_ATR_WINDOW + 1
+    if len(window) < needed:
+        return None
+    window = window[-needed:]
+    true_ranges = []
+    for previous, current in zip(window, window[1:]):
+        high, low, prior_close = current.high, current.low, previous.close
+        if not all(math.isfinite(value) for value in (high, low, prior_close)):
+            return None
+        true_ranges.append(max(high - low, abs(high - prior_close), abs(low - prior_close)))
+    last_close = window[-1].close
+    if not math.isfinite(last_close) or last_close <= 0:
+        return None
+    return (sum(true_ranges) / len(true_ranges)) / last_close * 100.0
+
+
+def build_atr_lookup(cfg: dict):
+    """Return a point-in-time ATR14% lookup backed by the cached daily bars.
+
+    Money-market and short-duration ETFs are identifiable only from the shape of
+    their price series, and the daily cache is the only place that evidence
+    exists. A missing cache yields None so the caller can fall back to the
+    price-peg band instead of silently assuming normal volatility.
+    """
+    from .data import load_cache
+
+    directory = market_data_dir(cfg)
+
+    def lookup(symbol: str, as_of=None) -> float | None:
+        if not symbol:
+            return None
+        try:
+            snapshot = load_cache(symbol, directory)
+        except (FileNotFoundError, ValueError, OSError):
+            return None
+        return atr14_pct(snapshot.bars, as_of)
+
+    return lookup
+
+
+def money_market_exclusion(row: dict, rules: dict, atr_lookup=None, as_of=None) -> dict | None:
+    """Return an exclusion record for money-market style ETFs, else None.
+
+    Two independent tests, either sufficient on its own:
+
+    1. ATR14 below ``money_market_max_atr_pct`` -- the price is effectively pegged.
+       This also catches par-priced funds that drift out of the 100 band
+       (e.g. accumulated-value money ETFs and short-duration bond ETFs).
+    2. Price within ``money_market_price_band`` of 100 -- the money-market par peg,
+       used as corroboration and as the fallback when no daily history is cached.
+
+    Rationale: their recorded net inflow is creations/redemptions, not
+    secondary-market order flow, so scoring them against equity/commodity peers
+    and turning that into an up-probability is meaningless. They were occupying
+    coarse-screen slots on inflow magnitude alone (511990 for two sessions).
+    """
+    if not rules.get("exclude_money_market_etfs", True):
+        return None
+    price = finite(row.get("price"))
+    if price is None or price <= 0:
+        return None
+    max_atr = float(rules.get("money_market_max_atr_pct", MONEY_MARKET_DEFAULT_MAX_ATR_PCT))
+    band = float(rules.get("money_market_price_band", MONEY_MARKET_DEFAULT_PRICE_BAND))
+    threshold = {"max_atr_pct": max_atr, "price_band": band}
+    atr = atr_lookup(row.get("symbol"), as_of) if atr_lookup is not None else None
+    if atr is not None and atr < max_atr:
+        return {"symbol": row.get("symbol"), "name": row.get("name"),
+                "reason": "money_market_flat_price", "basis": "atr14_pct",
+                "atr14_pct": round(atr, 6), "price": round(price, 6), "threshold": threshold}
+    if abs(price - 100.0) <= band:
+        return {"symbol": row.get("symbol"), "name": row.get("name"),
+                "reason": "money_market_par_price_peg",
+                "basis": "price_band" if atr is not None else "price_band_no_history",
+                "atr14_pct": round(atr, 6) if atr is not None else None,
+                "price": round(price, 6), "threshold": threshold}
+    return None
+
+
 def selection_limit(rules: dict, limit: int | None = None) -> int | None:
     value = rules.get("top_n") if limit is None else limit
     if value is None:
@@ -50,7 +140,8 @@ def rule_identity(rules: dict, limit: int | None) -> str:
                                      "algorithm_version": 5}, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def select_etfs(records: list[dict], rules: dict, limit: int | None = None) -> tuple[list, list]:
+def select_etfs(records: list[dict], rules: dict, limit: int | None = None, atr_lookup=None,
+                as_of=None, exclusions: list | None = None) -> tuple[list, list]:
     cap = selection_limit(rules, limit)
     eligible = []
     for row in records:
@@ -59,6 +150,11 @@ def select_etfs(records: list[dict], rules: dict, limit: int | None = None) -> t
         market_cap = finite(row.get("market_cap")) or 0.0
         price = finite(row.get("price")) or -1.0
         if row["asset_class"] not in rules["asset_classes"] or amount <= 0 or market_cap <= 0 or amount < rules["min_amount"] or market_cap < rules["min_market_cap"] or price <= 0:
+            continue
+        exclusion = money_market_exclusion(row, rules, atr_lookup, as_of)
+        if exclusion is not None:
+            if exclusions is not None:
+                exclusions.append(exclusion)
             continue
         if finite(row.get("main_net_inflow_pct")) is None or finite(row.get("main_net_inflow")) is None:
             continue
@@ -142,7 +238,10 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
         fresh = [row for row in fresh if quote_day(row) == latest_quote_day]
     rules = cfg["etf_market"]["screen"]
     cap = selection_limit(rules, limit)
-    eligible, selected = select_etfs(fresh, rules, cap)
+    atr_lookup = build_atr_lookup(cfg)
+    money_market_excluded: list = []
+    eligible, selected = select_etfs(fresh, rules, cap, atr_lookup=atr_lookup,
+                                     exclusions=money_market_excluded)
     if not selected:
         raise ValueError("no eligible ETF candidates with fresh, complete money-flow data")
     observation = build_opportunity_observation(cfg, eligible, selected, manifest, decision.isoformat())
@@ -152,6 +251,8 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
         "rules": rules,
         "score_formula": "weighted mean of available main flow, liquidity, momentum, order divergence, flow/market-cap (1% clip) and peer-relative daily strength (5 percentage-point clip); missing factors excluded; heuristic weights, not calibrated probabilities",
         "flow_caveat": snapshot["flow_definition"], "selected": selected,
+        "money_market_exclusions": money_market_excluded,
+        "money_market_exclusion_note": "par-priced / flat-volatility funds removed before scoring; their recorded inflow is creations and redemptions, not secondary-market order flow",
         "decision_at_utc": decision.isoformat(), "fresh_records": len(fresh),
         "screen_freeze_policy": "first_daily_selection_wins",
         "opportunity_observation": observation,

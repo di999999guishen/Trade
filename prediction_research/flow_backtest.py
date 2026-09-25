@@ -18,8 +18,9 @@ from .store import connect, record_run
 
 def reconstruct_screens(cfg: dict) -> dict:
     rules = cfg["etf_market"]["screen"]
-    from .screening import selection_limit
+    from .screening import build_atr_lookup, selection_limit
     limit = selection_limit(rules)
+    atr_lookup = build_atr_lookup(cfg)
     identity = rule_identity(rules, limit)
     zone = ZoneInfo(cfg.get("timezone", "Asia/Shanghai"))
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
@@ -67,7 +68,8 @@ def reconstruct_screens(cfg: dict) -> dict:
                           "decision_basis": "frozen_live_decision" if batch else "configured_historical_cutoff"}
     cohorts = []
     for day, snapshot in sorted(daily.items()):
-        eligible, selected = select_etfs(snapshot["rows"], rules, limit)
+        eligible, selected = select_etfs(snapshot["rows"], rules, limit, atr_lookup=atr_lookup,
+                                         as_of=snapshot["day"])
         if not selected:
             continue
         momentum = sorted(eligible, key=lambda row: (row.get("change_pct") or 0, row["symbol"]), reverse=True)[:limit]
