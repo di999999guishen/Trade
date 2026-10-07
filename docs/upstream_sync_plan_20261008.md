@@ -1,6 +1,7 @@
 # 上游同步方案（v0.4.x → v0.6.0）
 
 > 生成时间：2026-10-08 06:55
+> **修订 1（07:0x）：§3 依赖断层经实测推翻并整段重写**（原判「0.3→1.6 破坏性升级」系把 pyproject 声明下限误当实装版本）
 > 触发：用户要求「把目前最新提交拉取和我当前的代码文件合并」
 > 状态：**仅取证与方案，未执行合并**（详见 §7 结论）
 > 取证手段：`git merge-tree --write-tree --name-only`（内存合并，全程零触碰工作区）
@@ -18,7 +19,9 @@
 | 上游版本 | `upstream/main` HEAD = `1394a3f`（2026-10-03），即 **v0.6.0** |
 | `origin` 有无新提交 | **无**（本地领先 origin/main 2 个提交）。所谓「最新提交」只能指上游 |
 | 风险面 | 冲突 **100% 集中在 `tradingagents/` 引擎包**；自有编排层 **零冲突**（见 §5） |
-| 九点前能否安全完成 | **不能。** 硬赶会危及今晚 18:00/19:00/20:00 三条链 |
+| 依赖层是否是阻塞 | **不是**（§3 实测修正）。生产 venv **早已在 v0.6.0 依赖栈上**，仅剩 5 个 package 的 patch 级补丁 |
+| 真正的硬骨头 | **代码层 45 个冲突** + 6 条「上游删模块 / 本地仍在用」的 import 路径迁移 |
+| 九点前能否安全完成 | **不能。** 硬赶会危及今晚 18:00/19:00/20:00 三条链（今天是节后首个交易日） |
 
 ---
 
@@ -46,26 +49,47 @@
 
 ---
 
-## 3. 依赖断层（这是最容易被低估的一条）
+## 3. 依赖断层 —— ⚠️ 本节已于 2026-10-08 07:0x 实测修正
 
-上游 v0.6.0 把依赖整体抬了一个大版本，**其中两个是破坏性升级**：
+> **修正说明**：初版把 `pyproject.toml` 的**声明下限**误当成**实际安装版本**，得出「0.3→1.6 破坏性升级」的结论。
+> 经直接查询生产 venv（`E:\Trade\TradingAgents\.venv`，`importlib.metadata`），**实际环境早已在 v0.6.0 依赖栈上**。
 
-| 依赖 | 本地 | 上游 v0.6.0 | 风险 |
-|---|---|---|---|
-| `requires-python` | `>=3.10` | **`>=3.11`** | 低 |
-| `langchain-core` | `>=0.3.81` | **`>=1.6.5`** | **高**（0.x → 1.x 破坏性） |
-| `langgraph` | `>=0.4.8` | **`>=1.2.12`** | **高**（checkpoint API 重写） |
-| `langgraph-checkpoint-sqlite` | `>=2.0.0` | **`>=3.1.1`** | 高 |
-| `pandas` | `>=2.3.0` | **`>=3.0.6`** | **高**（3.0 默认 Copy-on-Write，索引/赋值语义变化） |
-| `yfinance` | `>=1.4.1` | `>=1.7.0` | 中（本地已停用 yfinance，见 MEMORY §4） |
-| `langchain-anthropic` | `>=0.3.15` | `>=1.7.4` | 高 |
-| `langchain-openai` | `>=0.3.23` | `>=1.6.6` | 高 |
-| `langchain-google-genai` | `>=4.0.0` | `>=4.4.0` | 低 |
+### 3.1 生产环境实测（唯一环境，`include-system-site-packages=false`）
 
-> **含义**：全量合并 = 同时升 langchain 0.3→1.6 + langgraph 0.4→1.2 + pandas 2→3。
-> 本地 `tradingagents/` 与 `prediction_research/` 都大量直接使用 pandas，
-> pandas 3.0 的 CoW 变更可能让**编排层的 22303 行自有代码**出现静默行为漂移（不报错、但数值变化）。
-> **这是本方案里唯一一个「不报错但会让结果不可信」的风险点**，必须单独立项验证。
+| 依赖 | 本机**实际安装** | 上游 v0.6.0 要求 | 差距 | 判定 |
+|---|---|---|---|---|
+| `python` | **3.13.14** | `>=3.11` | 满足 | ✅ |
+| `langchain-core` | **1.6.2** | `>=1.6.5` | −3 patch | 🟡 小补 |
+| `langgraph` | **1.2.11** | `>=1.2.12` | −1 patch | 🟡 小补 |
+| `langgraph-checkpoint-sqlite` | **3.1.1** | `>=3.1.1` | 满足 | ✅ |
+| `pandas` | **3.0.5** | `>=3.0.6` | −1 patch | 🟡 小补 |
+| `yfinance` | **1.7.0** | `>=1.7.0` | 满足 | ✅ |
+| `langchain-anthropic` | **1.7.1** | `>=1.7.4` | −3 patch | 🟡 小补 |
+| `langchain-openai` | **1.6.0** | `>=1.6.6` | −6 patch | 🟡 小补 |
+| `langchain-google-genai` | **4.4.0** | `>=4.4.0` | 满足 | ✅ |
+
+**全部是 patch 级差距，无一处跨大版本。** 一条命令即可补齐：
+`pip install -U "langchain-core>=1.6.5" "langgraph>=1.2.12" "pandas>=3.0.6" "langchain-anthropic>=1.7.4" "langchain-openai>=1.6.6"`
+
+### 3.2 本地代码在新栈上的实测结果（本次已跑）
+
+```
+python 3.13.14 / pandas 3.0.5 / langchain-core 1.6.2 / langgraph 1.2.11 / yfinance 1.7.0
+import tradingagents.graph.trading_graph        OK
+import tradingagents.graph.signal_processing    OK
+import tradingagents.agents.utils.memory        OK
+import tradingagents.dataflows.market_data_validator  OK
+pytest prediction_research/tests/test_core.py + test_screen_handoff.py → 18 passed
+```
+
+> **含义（与初版结论相反）**：依赖层**不是**阻塞项。本地代码**已经**跑在 langchain 1.x / langgraph 1.x / pandas 3.x 上且健康。
+> 「pandas 3.0 CoW 静默漂移」的风险依然存在，但它是**既成事实**而非合并带来的新增风险 ——
+> 因为生产 venv 现在就是 pandas 3.0.5。若要追溯漂移，应作为**独立的历史问题**排查，不该记在这次合并账上。
+
+### 3.3 `pyproject.toml` 仍是旧声明（会误导）
+
+本地 `pyproject.toml` 标 `version = "0.4.0"`、写 `langchain-core>=0.3.81` 等**旧下限**。
+这只是「允许的最低版本」，实际环境早已远超。**读依赖面时必须看 venv 实装版本，不能看 pyproject 下限。**
 
 ---
 
@@ -178,8 +202,9 @@
 ### 路径 A：隔离分支完整合并（推荐，但需要整块时间）
 在 `upstream-sync-v0.6.0` 上完整合并 v0.6.0，逐冲突解决 + 分批测试，全绿后合回 `main`。
 - 优点：一次到位，拿到上游全部修复与新能力（backtest/portfolio/reporting/memory 包）。
-- 代价：45 冲突 + 依赖大升级 + pandas 3.0 行为验证，**预计需要一整段不被打断的工作时间**。
-- 风险：依赖升级一旦出问题，回退成本高。
+- 代价：**45 冲突逐条解决 + 6 条 import 路径迁移**，预计需要一整段不被打断的工作时间。
+- 风险：**依赖层已不再是风险**（§3 实测：环境早已在 v0.6.0 栈上，只剩 5 个 patch 级补丁）。
+  真正的风险纯在**代码层**：45 个冲突要人工定性，且必须分批测试。
 
 ### 路径 B：只 cherry-pick 真正需要的上游修复
 不动包结构、不升依赖，只把上游 v0.6.0 里的**具体 bug fix** 挑过来。
@@ -241,8 +266,14 @@ git merge upstream/main            # 预期 45 个冲突
 #                      dataflows/vendors/yahoo/{ohlcv,news,...}.py    ✅
 #                      graph/{analyst_execution,checkpointer,conditional_logic,propagation,setup}.py ✅
 
-# 4. 依赖升级（隔离环境做，不要污染生产 venv）
-#    注意 pandas 3.0 的 Copy-on-Write 语义变化
+# 4. 依赖补齐（⚠️ 已实测：基数已在 v0.6.0 栈上，只需补 patch）
+#    本机实装：langchain-core 1.6.2 / langgraph 1.2.11 / pandas 3.0.5 /
+#              langchain-anthropic 1.7.1 / langchain-openai 1.6.0
+#    一条命令补齐（建议先在隔离 venv 验证，再动生产 .venv）：
+#      pip install -U "langchain-core>=1.6.5" "langgraph>=1.2.12" \
+#                     "pandas>=3.0.6" "langchain-anthropic>=1.7.4" \
+#                     "langchain-openai>=1.6.6"
+#    pandas 3.0 CoW 已是既成事实（生产 venv 就是 3.0.5），非本次新增风险。
 
 # 5. 分批测试（本机 pytest 一次跑整个 tests/ 会 SIGTERM —— 必须按文件分批）
 #    5a. 先跑上游新测试，确认引擎层本身健康
