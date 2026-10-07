@@ -200,6 +200,25 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
         from tradingagents.dataflows.akshare_data import load_ohlcv_akshare
         return load_ohlcv_akshare(symbol, curr_date)
 
+    # 美股可选走新浪国内源（需调用方在 config 里显式开启 us_ohlcv_vendor=
+    # "sina"）。Yahoo 对 SPY/QQQ/GLD 这类标的会返回 429 并被判成「无行情数据」，
+    # 而每日必跑任务要求不依赖限流源。默认关闭，以保证其它调用方行为不变。
+    if get_config().get("us_ohlcv_vendor") == "sina":
+        try:
+            from tradingagents.dataflows.akshare_data import (
+                _parse_symbol, load_ohlcv_akshare,
+            )
+            if _parse_symbol(canonical)[1] == "us":
+                try:
+                    return load_ohlcv_akshare(symbol, curr_date)
+                except Exception as exc:
+                    logger.warning(
+                        "Sina US OHLCV failed for %s (%s); falling back to Yahoo.",
+                        symbol, exc,
+                    )
+        except Exception as exc:  # symbol/logging problem; keep Yahoo path
+            logger.debug("Sina US branch skipped for %s: %s", symbol, exc)
+
     safe_symbol = safe_ticker_component(canonical)
 
     config = get_config()

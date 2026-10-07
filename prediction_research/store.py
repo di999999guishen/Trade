@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS agent_outcomes (
   actual_return REAL NOT NULL,
   actual_up INTEGER NOT NULL,
   direction_correct INTEGER,
+  hold_correct_vs_buy INTEGER,
+  peer_mean_return REAL,
+  excess_vs_peer REAL,
   settled_at_utc TEXT NOT NULL,
   UNIQUE(analysis_id, horizon)
 );
@@ -188,6 +191,13 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
                      "small_net_inflow", "small_net_inflow_pct"):
             if name not in columns:
                 connection.execute(f"ALTER TABLE etf_flow_snapshots ADD COLUMN {name} REAL")
+        # Hold/未识别方向原本计分为 NULL，导致有效样本恒为 0；这几列让它们也能入账。
+        outcome_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_outcomes)")}
+        for name, declaration in (("hold_correct_vs_buy", "INTEGER"),
+                                  ("peer_mean_return", "REAL"),
+                                  ("excess_vs_peer", "REAL")):
+            if name not in outcome_columns:
+                connection.execute(f"ALTER TABLE agent_outcomes ADD COLUMN {name} {declaration}")
         connection.commit()
         yield connection
     finally:

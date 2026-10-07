@@ -6,7 +6,9 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 ENDPOINT = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -66,8 +68,25 @@ def fetch_daily(symbol: str, output_dir: Path, start: str = "20100101", end: str
     return {"symbol": symbol, "rows": len(rows), "start": rows[0]["date"], "end": rows[-1]["date"], "path": str(path.resolve()), "provider_name": data.get("name")}
 
 
+def recent_session_close_epoch(now: float | None = None) -> float:
+    """Epoch of the most recent A-share close (15:00 Asia/Shanghai).
+
+    A cache file written at or after this instant was refreshed after the last
+    close, so it already holds every bar the current session can produce and
+    re-fetching it would return identical data. Used as the freshness cut-off by
+    `fetch_universe` so post-close jobs can skip work the backfill already did.
+    """
+    zone = ZoneInfo("Asia/Shanghai")
+    moment = datetime.fromtimestamp(now, zone) if now is not None else datetime.now(zone)
+    close = moment.replace(hour=15, minute=0, second=0, microsecond=0)
+    if close > moment:
+        close -= timedelta(days=1)
+    return close.timestamp()
+
+
 def fetch_universe(assets: list[dict], output_dir: Path, trip_after: int = 3,
-                   reprobe_every: int = 50, interval: float = 1.0) -> dict:
+                   reprobe_every: int = 50, interval: float = 1.0,
+                   skip_if_cached_after: float | None = None) -> dict:
     """Refresh daily bars for every asset, preferring Eastmoney with a Sina fallback.
 
     Eastmoney's push2his endpoint can be refused at the WAF level for the local
@@ -77,14 +96,27 @@ def fetch_universe(assets: list[dict], output_dir: Path, trip_after: int = 3,
     and the remaining symbols go straight to Sina, with one re-probe every
     `reprobe_every` symbols so a recovered provider is picked up mid-run instead
     of staying disabled until the process restarts.
+
+    Pass `skip_if_cached_after` (see `recent_session_close_epoch`) to leave
+    already-fresh caches alone. Several hundred symbols stay listed as unsettled
+    purely because their horizon has not elapsed yet, and those are re-listed
+    every cycle; without this gate each cycle would re-download bars it already
+    has. Skipped symbols are reported under `fresh_skipped` and are neither
+    successes nor failures.
     """
     successes, failures = [], {}
+    fresh_skipped: list[str] = []
     consecutive_failures = 0
     paused = False
     countdown = 0
     skipped_primary = 0
     for asset in assets:
         symbol = asset["symbol"]
+        if skip_if_cached_after is not None:
+            cached = output_dir / f"cache_{symbol}.csv"
+            if cached.exists() and cached.stat().st_mtime >= skip_if_cached_after:
+                fresh_skipped.append(symbol)
+                continue
         use_primary = True
         if paused:
             if countdown > 0:
@@ -131,4 +163,4 @@ def fetch_universe(assets: list[dict], output_dir: Path, trip_after: int = 3,
         time.sleep(interval)
     return {"provider_chain": ["eastmoney_push2his", "sina_kline"], "successes": successes,
             "failures": failures, "primary_provider_paused": paused,
-            "primary_provider_skipped": skipped_primary}
+            "primary_provider_skipped": skipped_primary, "fresh_skipped": fresh_skipped}

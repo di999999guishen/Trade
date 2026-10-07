@@ -29,12 +29,23 @@ def save_daily_result(directory, ticker, run_id, run_time, analysis_date, result
                "run_time": run_time.isoformat(), "analysis_date": analysis_date,
                "decision": decision, "result": result}
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, default=json_default)
+    prediction_market_report = ""
+    if result.get("prediction_market_snapshot") is not None:
+        from tradingagents.dataflows.daily_prediction_markets import (
+            render_daily_prediction_market_report,
+        )
+
+        prediction_market_report = (
+            render_daily_prediction_market_report(result["prediction_market_snapshot"])
+            + "\n\n"
+        )
     # Exclusive creation prevents accidental replacement of an earlier run.
     with summary.open("x", encoding="utf-8") as handle:
         handle.write(serialized)
     with report.open("x", encoding="utf-8") as handle:
         handle.write(f"# {ticker} 每日预测\n\n- 运行编号: {run_id}\n"
                      f"- 分析日期: {analysis_date}\n- 最终决策: **{decision}**\n\n"
+                     f"{prediction_market_report}"
                      f"完整结构化结果：[{summary.name}]({summary.name})\n\n"
                      f"```json\n{serialized}\n```\n")
     return str(report), str(summary)

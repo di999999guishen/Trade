@@ -118,6 +118,15 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
              f"深度预测范围：粗筛前 {context.get('requested_prediction_top_n', '旧版本未记录')} 名；本轮实际候选 {context.get('prediction_candidate_count', len(context.get('candidate_symbols', [])))} 只。", "",
              "## 执行与等待", "", "| 步骤 | 状态 |", "|---|---|"]
     lines.extend(f"| {_cell(step['name'])} | {_cell(step['status'])} |" for step in context.get("steps", []))
+    # 告警必须在报告正文里露出来：outcome 后缀只解决了程序判断，读报告的人同样要知道。
+    if context.get("warnings"):
+        lines.extend(["", "### 本轮告警", "", "| 代码 | 级别 | 说明 |", "|---|---|---|"])
+        for warning in context["warnings"]:
+            lines.append(f"| {_cell(warning.get('code'))} | {_cell(warning.get('severity'))} | {_cell(warning.get('message'))}（原因：`{_cell(warning.get('reason'))}`） |")
+    if context.get("llm_coverage"):
+        coverage = context["llm_coverage"]
+        lines.extend(["", f"TradingAgents 覆盖：本轮结算 {coverage.get('analyses_settled', 0)} 条；可用：{'是' if coverage.get('usable') else '否'}"
+                          + (f"（跳过原因：`{coverage.get('skip_reason')}`）" if coverage.get("skip_reason") else "") + "。"])
     if "prediction_eligible_symbols" in context:
         lines.extend(["", f"预测覆盖：申请候选 {context.get('prediction_candidate_count', 0)} 只；数据检查后可预测 {len(context['prediction_eligible_symbols'])} 只；本轮实际引用冻结预测 {len({row['symbol'] for row in predictions})} 只 / {len(predictions)} 条（标的×周期）。"])
     if context.get("prediction_exclusions"):

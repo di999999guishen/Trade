@@ -55,7 +55,7 @@
   },
   "workflow": {
     "prediction_top_n": 20,
-    "agent_top_n": 5,
+    "agent_top_n": 10,
     "max_quote_age_days": 4,
     "flow_round_trip_cost_bps": 10,
     "flow_grade_thresholds_pct": {"mild": 3.0, "strong": 10.0, "extreme": 20.0},

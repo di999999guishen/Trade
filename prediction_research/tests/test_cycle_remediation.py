@@ -285,11 +285,46 @@ def test_cached_cycle_returns_waiting_and_does_not_mutate_config(cfg, monkeypatc
     snapshot(cfg)
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
     result = run_cycle(cfg, 2, True)
-    assert result["outcome"] == "complete_with_data_waits", result.get("archive")
+    # 本轮没有任何 LLM 分析被结算 → outcome 必须带 _without_llm 后缀并给出告警，
+    # 不能伪装成 plain complete（P0-1）。
+    assert result["outcome"] == "complete_with_data_waits_without_llm", result.get("archive")
+    assert result["llm_coverage"]["usable"] is False and result["llm_coverage"]["analyses_settled"] == 0
+    assert [row["code"] for row in result["warnings"]] == ["llm_step_not_run"]
     assert len(result["prediction_ids"]) == 2
     assert "screened_current" not in cfg["universes"]
     report = Path(result["artifacts"]["report"]).read_text(encoding="utf-8")
     assert "净流出" in report and "首次可得" in report and "本轮模型验证" in report
+    # 缺 LLM 这一事实必须在正文可见，不能只有 JSON 里有。
+    assert "本轮告警" in report and "llm_step_not_run" in report and "TradingAgents 覆盖" in report
+
+
+def test_switching_off_skip_flag_restores_plain_complete(cfg, monkeypatch):
+    write_histories(cfg)
+    snapshot(cfg)
+    cfg["workflow"]["skip_tradingagents"] = False
+    monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
+    monkeypatch.setattr("prediction_research.cycle.run_tradingagents", lambda *_: (Path("batch.json"), {"items": []}))
+    monkeypatch.setattr("prediction_research.cycle.settle_agent_analyses",
+                        lambda _: {"successful_analyses": 3, "settled": 3, "scored": 3, "items": []})
+    result = run_cycle(cfg, 2, True)
+    # 开关关闭 + 有结算 → 不加后缀、不发告警。
+    assert result["outcome"] == "complete_with_data_waits", result.get("archive")
+    assert result["llm_coverage"] == {"analyses_settled": 3, "skip_flag": False, "skip_reason": None, "usable": True}
+    assert result["warnings"] == []
+
+
+def test_skip_flag_warns_even_when_stale_analyses_settle(cfg, monkeypatch):
+    write_histories(cfg)
+    snapshot(cfg)
+    monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
+    # settle 会补结历史遗留的分析，但本轮 LLM 一步没跑 → 仍然必须告警。
+    monkeypatch.setattr("prediction_research.cycle.settle_agent_analyses",
+                        lambda _: {"successful_analyses": 3, "settled": 3, "scored": 3, "items": []})
+    result = run_cycle(cfg, 2, True)
+    assert result["llm_coverage"] == {"analyses_settled": 3, "skip_flag": True,
+                                      "skip_reason": "skip_tradingagents", "usable": False}
+    assert result["outcome"] == "complete_with_data_waits_without_llm"
+    assert [row["code"] for row in result["warnings"]] == ["llm_step_not_run"]
 
 
 @pytest.mark.parametrize("failure", ["screen", "empty", "histories", "report"])

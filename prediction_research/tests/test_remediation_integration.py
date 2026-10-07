@@ -111,4 +111,7 @@ def test_feature_history_without_mature_training_labels_waits(cfg, monkeypatch):
     assert result["data_readiness"] == "ready"
     assert not result.get("prediction_ids")
     assert any(row["name"] == "training_readiness_5d" and row["status"] == "waiting_for_data" for row in result["steps"])
-    assert result["outcome"] == "complete_with_data_waits"
+    # 没有结算任何 LLM 分析 → 后缀 _without_llm + 显式告警（P0-1）。
+    assert result["outcome"] == "complete_with_data_waits_without_llm"
+    assert result["llm_coverage"]["usable"] is False
+    assert [row["code"] for row in result["warnings"]] == ["llm_step_not_run"]

@@ -44,7 +44,8 @@ def workflow_status(cfg: dict) -> dict:
     for cycle_path in cycle_paths:
         cycle = json.loads(cycle_path.read_text(encoding="utf-8"))
         outcome = cycle.get("outcome")
-        if outcome in {"complete", "complete_with_data_waits"} or outcome is None and all(
+        # 任何 complete* 都算跑通，包括 *_without_llm：缺 LLM 是覆盖度问题，单独看 llm_coverage。
+        if (outcome or "").startswith("complete") or outcome is None and all(
             item.get("status") in {"ok", "skipped_by_configuration"} for item in cycle.get("steps", [])
         ):
             successful_cycle_runs += 1
@@ -66,7 +67,9 @@ def workflow_status(cfg: dict) -> dict:
                                   "data_readiness": latest_cycle.get("data_readiness"),
                                   "decision_at_utc": latest_cycle.get("decision_at_utc"),
                                   "artifacts": latest_cycle.get("artifacts", {}),
-                                  "validation": latest_cycle.get("validation", {})}
+                                  "validation": latest_cycle.get("validation", {}),
+                                  "llm_coverage": latest_cycle.get("llm_coverage"),
+                                  "warnings": latest_cycle.get("warnings", [])}
         strategy_path = latest_cycle.get("artifacts", {}).get("flow_strategy")
         if strategy_path and Path(strategy_path).exists():
             strategy = json.loads(Path(strategy_path).read_text(encoding="utf-8"))

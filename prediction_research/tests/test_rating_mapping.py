@@ -113,7 +113,10 @@ def test_settlement_does_not_score_exposure_change_as_price_prediction_or_rewrit
             "report_dir": "old-report",
         }, "2026-01-01")
         old = ("old-outcome", old_id, 5, "down", "2026-01-06", -0.1, 0, 1, "2026-01-06T18:00:00Z")
-        connection.execute("INSERT INTO agent_outcomes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", old)
+        connection.execute(
+            "INSERT INTO agent_outcomes (outcome_id, analysis_id, horizon, direction, "
+            "target_end_date, actual_return, actual_up, direction_correct, settled_at_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", old)
         connection.commit()
     sample = SimpleNamespace(feature_date=date(2026, 1, 1), target_end_date=date(2026, 1, 6),
                              target_return=-0.1, target_up=0)
@@ -126,8 +129,17 @@ def test_settlement_does_not_score_exposure_change_as_price_prediction_or_rewrit
     assert by_rating["Sell"]["direction_correct"] == 1
     for rating in ("Overweight", "Underweight", "Hold", None):
         assert by_rating[rating]["direction_correct"] is None
+        # 没有方向的评级不能混进方向命中率，只在机会成本口径下单列：
+        # 池子下跌(=0)时"不动"算避损 1。
+        assert by_rating[rating]["hold_correct_vs_buy"] == 1
+    assert by_rating["Buy"]["hold_correct_vs_buy"] is None
+    # 显式列名而不是 SELECT *：schema 会随迁移加列，位置比较会假失败。
+    legacy_columns = ("outcome_id, analysis_id, horizon, direction, target_end_date, "
+                      "actual_return, actual_up, direction_correct, settled_at_utc")
     with connect(db_path) as connection:
-        assert tuple(connection.execute("SELECT * FROM agent_outcomes WHERE outcome_id='old-outcome'").fetchone()) == old
+        legacy = connection.execute(
+            f"SELECT {legacy_columns} FROM agent_outcomes WHERE outcome_id='old-outcome'").fetchone()
+        assert tuple(legacy) == old
         new_changes = connection.execute(
             "SELECT direction,direction_correct FROM agent_outcomes o JOIN agent_analyses a USING (analysis_id) "
             "WHERE a.decision_text IN ('Overweight','Underweight') AND a.symbol != 'OLD'"

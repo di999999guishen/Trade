@@ -2,7 +2,7 @@
 
 Replaces yfinance for A-share (.SZ/.SS) and HK (.HK) stocks using
 Sina Finance (A-shares) and Tencent Finance (HK stocks) direct APIs.
-US stocks raise NoMarketDataError so the vendor chain falls back to yfinance.
+US stocks (including SPY, QQQ and GLD) use Sina's US daily K-line endpoint.
 
 These APIs are chosen because they work reliably from within this network
 environment (eastmoney's push2his API is blocked by the corporate firewall).
@@ -273,16 +273,13 @@ def _fetch_us_sina(symbol: str) -> pd.DataFrame:
 # ── Unified OHLCV loader ─────────────────────────────────────────────────────
 
 def load_ohlcv_akshare(symbol: str, curr_date: str) -> pd.DataFrame:
-    """Fetch OHLCV data using Sina (A-shares) / Tencent (HK+US) APIs with caching.
+    """Fetch OHLCV data using Sina (A-shares/US) / Tencent (HK) with caching.
 
     Supports: A-shares (.SZ/.SS/.BJ), HK (.HK), US (no suffix like MSFT/AAPL).
     """
     canonical = normalize_symbol(symbol)
     safe_symbol = safe_ticker_component(canonical)
     code, market = _parse_symbol(canonical)
-
-    if market == "us":
-        downloaded = _fetch_us_sina(code)
 
     config = get_config()
     curr_date_dt = pd.to_datetime(curr_date)

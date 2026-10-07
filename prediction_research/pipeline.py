@@ -171,7 +171,9 @@ def _latest_backtest(cfg: dict, universe: str, horizon: int, feature_set: str, m
             continue
         if (payload.get("model_version") == model_version and payload.get("feature_set", "base") == feature_set
                 and payload.get("model_scope", "pooled") == model_scope):
-            return {"path": str(path.resolve()), "metrics": payload.get("metrics", {}), "snapshots": payload.get("snapshots", {})}
+            return {"path": str(path.resolve()), "metrics": payload.get("metrics", {}),
+                    "snapshots": payload.get("snapshots", {}),
+                    "_predictions": payload.get("predictions") or []}
     return None
 
 
@@ -190,6 +192,60 @@ def validation_metrics(cfg: dict, metric: dict) -> dict:
     return {"passed": True, "reason": "validation gate passed"}
 
 
+def selection_validation(cfg: dict, predictions: list[dict]) -> dict | None:
+    """用 IC（不是 Brier）判断这批样本外预测有没有**选股**能力。
+
+    为什么必须单独算一层
+    --------------------
+    validation_metrics() 做的是校准门（Brier vs 历史基准率）。2026-10-05 实测
+    commodity h20 的 Brier skill 显著为正（+0.00528，block bootstrap CI 全在正区间，
+    Bonferroni 六重校正通过），但同批样本的 Pearson IC 仅 0.0267、ICIR 0.051、
+    分位组收益不单调；cached h20 的 Q5−Q1 甚至是 −3.83pp 的反向。
+
+    两者脱钩的含义是：模型学到的是市场整体基准率（校准），不是个股排序（选股）。
+    只靠 Brier 会放行一个「概率给得准但不会挑股」的模型。
+
+    注意这里判的是「能不能选股」，不是「有没有价值」——校准合格的信号仍然可用于
+    市场方向择时，所以返回值里的 usages 会显式区分两种用法，而不是一票否决。
+    """
+    if not predictions:
+        return None
+    from types import SimpleNamespace
+
+    from .evaluation import selection_metrics, signal_verdict
+
+    rows = []
+    for row in predictions:
+        if row.get("probability_up") is None or row.get("actual_return") is None:
+            continue
+        if not row.get("feature_date") or row.get("symbol") is None:
+            continue
+        rows.append(SimpleNamespace(
+            feature_date=row["feature_date"],
+            symbol=row["symbol"],
+            probability_up=row["probability_up"],
+            actual_return=row["actual_return"],
+            actual_up=row.get("actual_up"),
+        ))
+    # 横截面 IC 至少需要若干天、每天至少 3 个标的，样本太少时无法给出结论。
+    if len(rows) < 30:
+        return None
+    selection = selection_metrics(rows)
+    if not selection.get("ic"):
+        return None
+    verdict = signal_verdict(selection)
+    return {
+        "selection_usable": bool(verdict.get("selection_usable")),
+        "icir": verdict.get("icir"),
+        "ic_mean": verdict.get("ic_mean"),
+        "spread_top_minus_bottom": verdict.get("spread_top_minus_bottom"),
+        "monotonic_quantiles": verdict.get("monotonic_quantiles"),
+        "usages": verdict.get("usages") or {},
+        "verdict_reason": verdict.get("reason"),
+        "cross_section_rows": selection.get("rows"),
+    }
+
+
 def _validation_status(cfg: dict, universe: str, horizon: int, feature_set: str, model_scope: str, model_version: str,
                        backtest_path: Path | None = None, expected_snapshots: dict | None = None) -> dict:
     if backtest_path:
@@ -198,17 +254,41 @@ def _validation_status(cfg: dict, universe: str, horizon: int, feature_set: str,
                     "model_scope": model_scope, "model_version": model_version}
         if any(frozen_test.get(key) != value for key, value in expected.items()):
             raise ValueError("backtest context does not match prediction")
+        detail = frozen_test.get("predictions") or []
         report = {"path": str(Path(backtest_path).resolve()), "metrics": frozen_test["metrics"],
                   "snapshots": frozen_test.get("snapshots", {})}
     else:
-        report = _latest_backtest(cfg, universe, horizon, feature_set, model_scope, model_version)
-    if not report:
-        return {"passed": False, "reason": "no matching walk-forward backtest", "report": None}
+        latest = _latest_backtest(cfg, universe, horizon, feature_set, model_scope, model_version)
+        if not latest:
+            return {"passed": False, "reason": "no matching walk-forward backtest", "report": None}
+        detail = latest.pop("_predictions", []) or []
+        report = latest
     if expected_snapshots is not None:
         actual = {symbol: row.get("sha256") for symbol, row in report.get("snapshots", {}).items()}
         if actual != expected_snapshots:
             return {"passed": False, "reason": "backtest training snapshots differ from current inputs", "report": report}
-    return {**validation_metrics(cfg, report["metrics"]), "report": report}
+
+    status = validation_metrics(cfg, report["metrics"])
+    # 选股能力单独判一层：校准合格 ≠ 能选股。report 里不含明细，
+    # 所以把它嵌进每条 prediction 不会把 3000+ 行样本重复写进去。
+    selection = selection_validation(cfg, detail)
+    gate = cfg["model"].get("validation_gate", {})
+    if selection is None:
+        status["selection_usable"] = None
+        status["allowed_usages"] = {}
+        status["selection"] = None
+        status["selection_status"] = "not_evaluated_insufficient_cross_section"
+    else:
+        status["selection"] = selection
+        status["selection_usable"] = selection["selection_usable"]
+        status["allowed_usages"] = selection["usages"]
+        if gate.get("require_selection_edge", False) and not selection["selection_usable"]:
+            # 严格模式：校准合格但无选股能力时同样降级为 research_only。
+            # 默认关闭 —— 因为实测结论是这类信号仍可用于市场方向择时，
+            # 一刀切降级会丢掉它真正的价值。
+            status["passed"] = False
+            status["reason"] = "ICIR below selection gate; model has no stock-picking edge"
+    return {**status, "report": report}
 
 
 def _latest_observed_training(samples: list[Sample], feature_date) -> list[Sample]:

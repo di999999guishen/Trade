@@ -208,21 +208,44 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
             return str(output.resolve())
         step(f"predict_{horizon}d", predict)
 
+    llm_disabled_reason = None
     if cfg.get("workflow", {}).get("skip_tradingagents"):
-        report["steps"].append({"name": "tradingagents", "status": "skipped_by_configuration"})
+        report["steps"].append({"name": "tradingagents", "status": "skipped_by_configuration",
+                                "reason": "skip_tradingagents"})
+        llm_disabled_reason = "skip_tradingagents"
     elif screen_context and history_ready:
-        step("tradingagents", lambda: str(run_tradingagents(cfg, min(top_n, int(cfg.get("workflow", {}).get("agent_top_n", 5))))[0]))
+        agent_run = step("tradingagents", lambda: str(run_tradingagents(cfg, min(top_n, int(cfg.get("workflow", {}).get("agent_top_n", 5))))[0]))
+        if agent_run is None:
+            llm_disabled_reason = "tradingagents_step_failed"
     else:
         blocked("tradingagents", "current_candidates_not_ready")
+        llm_disabled_reason = "current_candidates_not_ready"
     step("settle_predictions", lambda: settle_predictions(cfg))
-    step("settle_agent_analyses", lambda: settle_agent_analyses(cfg))
+    agent_settlement = step("settle_agent_analyses", lambda: settle_agent_analyses(cfg))
     step("settle_screen_selections", lambda: settle_screen_selections(cfg))
+
+    # LLM 链路没跑出来就不许装成 complete：本轮只有模型口径的结论，必须让 outcome
+    # 自己说出来，而不是藏在 steps 里等人翻。
+    llm_settled = int((agent_settlement or {}).get("settled", 0) or 0)
+    llm_skip_flag = bool(cfg.get("workflow", {}).get("skip_tradingagents"))
+    # settle 会补结历史遗留的分析，所以「结算条数 > 0」不等于本轮真跑了 LLM：
+    # 只要开关跳过或本轮 step 没跑成，就算没有 LLM 覆盖。
+    report["llm_coverage"] = {"analyses_settled": llm_settled,
+                              "skip_flag": llm_skip_flag, "skip_reason": llm_disabled_reason,
+                              "usable": llm_settled > 0 and not llm_skip_flag}
+    report["warnings"] = []
+    if not report["llm_coverage"]["usable"]:
+        report["warnings"].append({
+            "code": "llm_step_not_run", "severity": "warning",
+            "message": "本轮没有任何 TradingAgents 分析被结算；报告结论仅为模型口径，缺少 LLM 交叉验证。",
+            "reason": llm_disabled_reason or "tradingagents_produced_no_settled_analyses"})
 
     def outcome():
         statuses = {row["status"] for row in report["steps"]}
         if statuses & {"failed", "partial", "blocked_dependency"}:
             return "partial_failure"
-        return "complete_with_data_waits" if "waiting_for_data" in statuses else "complete"
+        base = "complete_with_data_waits" if "waiting_for_data" in statuses else "complete"
+        return base if report["llm_coverage"]["usable"] else f"{base}_without_llm"
     report["outcome"] = outcome()
     from .archives import redact_config
     report["runtime_config"] = redact_config(cfg)
