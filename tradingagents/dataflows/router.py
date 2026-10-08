@@ -39,6 +39,21 @@ from tradingagents.dataflows.vendors.yahoo.market import (
 )
 from tradingagents.dataflows.vendors.yahoo.news import get_global_news_yfinance, get_news_yfinance
 
+# --- CN (China) vendors: self-built, live at the dataflows root, not under vendors/ ---
+from tradingagents.dataflows.akshare_data import (
+    get_akshare_data_online,
+    get_akshare_indicators_window,
+)
+from tradingagents.dataflows.eastmoney_data import (
+    get_balance_sheet_eastmoney,
+    get_cashflow_eastmoney,
+    get_fundamentals_eastmoney,
+    get_global_news_eastmoney,
+    get_income_statement_eastmoney,
+    get_macro_data_akshare,
+    get_news_eastmoney,
+)
+
 logger = logging.getLogger(__name__)
 
 # Tools organized by category
@@ -97,40 +112,48 @@ OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "akshare": get_akshare_data_online,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
+        "akshare": get_akshare_indicators_window,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data
     "get_fundamentals": {
+        "eastmoney": get_fundamentals_eastmoney,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "eastmoney": get_balance_sheet_eastmoney,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "sec_edgar": get_sec_edgar_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "eastmoney": get_cashflow_eastmoney,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "sec_edgar": get_sec_edgar_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "eastmoney": get_income_statement_eastmoney,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "sec_edgar": get_sec_edgar_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
+        "eastmoney": get_news_eastmoney,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        "eastmoney": get_global_news_eastmoney,
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
     },
@@ -140,6 +163,7 @@ VENDOR_METHODS = {
     },
     # macro_data
     "get_macro_indicators": {
+        "akshare_macro": get_macro_data_akshare,
         "fred": get_fred_macro_data,
     },
     # prediction_markets

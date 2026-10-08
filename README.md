@@ -65,6 +65,35 @@ Full release notes are in [CHANGELOG.md](CHANGELOG.md).
 >
 > So we decided to fully open-source the framework. Looking forward to building impactful projects with you!
 
+## A股 ETF 信息获取与预测研究模块
+
+仓库中的 [`prediction_research/`](prediction_research/) 提供独立的 A 股 ETF 研究链路：全市场行情与资金流快照、ETF 分类、资金流粗筛、候选日线、5/20 日严格滚动回测、概率质量门、预测冻结、到期结算和审计报告。TradingAgents 在该链路中是粗筛后的可选证据层；未配置可用密钥时可以跳过，不影响定量流程。
+
+```powershell
+python run_research.py cycle
+python run_research.py status
+python run_research.py run-agents --top 10
+```
+
+完整中文用法见 [`prediction_research/USAGE.md`](prediction_research/USAGE.md)。该模块只用于研究，不自动下单。
+
+### A 股与港股数据源
+
+A 股与港股标的（`.SS` / `.SZ` / `.BJ` / `.HK`）默认走境内数据源，**无需 API key**：`akshare`（行情与宏观，`core_stock_apis` / `technical_indicators` / `macro_data`）与 `eastmoney`（基本面、财报、新闻，`fundamental_data` / `news_data`），境外源（`yfinance` / `fred`）仅作回退。默认 `data_vendors` 已按此配置：
+
+```python
+config["data_vendors"] = {
+    "core_stock_apis": "akshare,yfinance",
+    "technical_indicators": "akshare,yfinance",
+    "fundamental_data": "eastmoney,yfinance",
+    "news_data": "eastmoney,yfinance",
+    "macro_data": "akshare_macro,fred",
+    "prediction_markets": "polymarket",
+}
+```
+
+A 股情绪面（StockTwits / Reddit）无境内等价源，CN 标的会返回显式的 `placeholder` 占位而非臆造内容。到期结算同样按标的自动分派境内日线，避免对 A 股走 Yahoo 取价。
+
 ## TradingAgents Framework
 
 TradingAgents is a multi-agent trading framework that mirrors the dynamics of real-world trading firms. By deploying specialized LLM-powered agents: from fundamental analysts, sentiment experts, and technical analysts, to trader, risk management team, the platform collaboratively evaluates market conditions and informs trading decisions. Moreover, these agents engage in dynamic discussions to pinpoint the optimal strategy.
@@ -217,7 +246,7 @@ A saved report also includes `complete_report.html`, the report as one page with
 
 ### Markets and tickers
 
-TradingAgents works with any market Yahoo Finance covers, using the exchange-suffixed ticker. Company identity and the alpha benchmark resolve automatically per market.
+TradingAgents works with any market Yahoo Finance covers, using the exchange-suffixed ticker. Company identity and the alpha benchmark resolve automatically per market. A-share and Hong Kong tickers resolve through domestic vendors instead, and need no API key — see [A 股与港股数据源](#a-股与港股数据源).
 
 - US: `AAPL`, `SPY`
 - Hong Kong: `0700.HK` · Tokyo: `7203.T` · London: `AZN.L`

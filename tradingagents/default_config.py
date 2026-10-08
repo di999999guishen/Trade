@@ -156,14 +156,18 @@ def build_default_config() -> dict:
         # routed to vendors you didn't choose. For ordered fallback, list several,
         # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
         "data_vendors": {
-            "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
-            "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-            # Statements come from SEC EDGAR as filed (US filers), then Yahoo; the
-        # overview and insider tools, which SEC EDGAR does not serve, from Yahoo.
-        "fundamental_data": "sec_edgar,yfinance",  # Options: sec_edgar, alpha_vantage, yfinance
-            "news_data": "yfinance",             # Options: alpha_vantage, yfinance
-            "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
-            "prediction_markets": "polymarket",  # Options: polymarket (keyless)
+            # CN-first chain: domestic sources primary, foreign ones as fallback.
+            "core_stock_apis": "akshare,yfinance",       # Options: akshare, alpha_vantage, yfinance
+            "technical_indicators": "akshare,yfinance",  # Options: akshare, alpha_vantage, yfinance
+            # sec_edgar leads so a US filer's statements arrive as of their
+            # filing date (point-in-time), not their reporting period. A CN
+            # ticker is not a SEC filer: cik_for() returns None and the router
+            # falls through to eastmoney, so domestic coverage is unchanged.
+            # The ticker map is cached for a day, so leading costs one lookup.
+            "fundamental_data": "sec_edgar,eastmoney,yfinance",  # Options: sec_edgar, eastmoney, alpha_vantage, yfinance
+            "news_data": "eastmoney,yfinance",           # Options: eastmoney, alpha_vantage, yfinance
+            "macro_data": "akshare_macro,fred",          # Options: akshare_macro, fred (needs FRED_API_KEY)
+            "prediction_markets": "polymarket",          # Options: polymarket (keyless)
         },
         # Tool-level configuration (takes precedence over category-level)
         "tool_vendors": {

@@ -1,0 +1,29 @@
+{
+  "schema_version": "proposal-1.0",
+  "implementation_status": "design_only",
+  "factor_id": "mom_252_skip21",
+  "version": "1.0.0",
+  "asset_scope": "us_listed_etf_exploratory_pool",
+  "hypothesis": "Intermediate horizon relative strength may persist after excluding the most recent month.",
+  "expression": "TR_CLOSE[t-21] / TR_CLOSE[t-252] - 1",
+  "expression_language": "design_dsl_not_executable_python",
+  "input_fields": ["total_return_close"],
+  "maximum_lag_sessions": 252,
+  "minimum_price_observations": 253,
+  "decision_timezone": "America/New_York",
+  "decision_local_time": "18:00:00",
+  "availability_rule": "all input available_at <= decision_at",
+  "direction_prior": "positive",
+  "transform": {
+    "method": "cross_section_rank",
+    "universe": "eligible_as_of_decision",
+    "fit_on": "no_fitted_parameters_for_rank",
+    "minimum_eligible_assets": 5
+  },
+  "missing_policy": "exclude_from_factor_rank_and_record_reason",
+  "first_experiment_id": "to_be_assigned_before_evaluation",
+  "input_snapshot_hash": null,
+  "implementation_code_hash": null,
+  "validation_status": "not_implemented_not_evaluated",
+  "required_checks": ["hand_calculated_fixture", "future_perturbation_invariance", "corporate_action_basis", "same_date_universe_only"]
+}

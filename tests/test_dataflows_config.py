@@ -8,6 +8,12 @@ import pytest
 import tradingagents.default_config as default_config
 from tradingagents.dataflows.config import get_config, set_config
 
+# This fork ships CN-first defaults (akshare/eastmoney ahead of yfinance), so the
+# isolation tests below must assert against DEFAULT_CONFIG itself rather than the
+# literal upstream strings: what they guard is the isolation semantics, not which
+# vendor happens to sit at the head of each chain.
+_DEFAULTS = default_config.DEFAULT_CONFIG
+
 
 @pytest.mark.unit
 class DataflowsConfigIsolationTests(unittest.TestCase):
@@ -20,7 +26,8 @@ class DataflowsConfigIsolationTests(unittest.TestCase):
         cfg["tool_vendors"]["get_stock_data"] = "alpha_vantage"
 
         fresh = get_config()
-        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "yfinance")
+        self.assertEqual(fresh["data_vendors"]["core_stock_apis"],
+                         _DEFAULTS["data_vendors"]["core_stock_apis"])
         self.assertNotIn("get_stock_data", fresh["tool_vendors"])
 
     def test_set_config_does_not_alias_caller_nested_dicts(self):
@@ -48,9 +55,12 @@ class DataflowsConfigIsolationTests(unittest.TestCase):
 
         fresh = get_config()
         self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "alpha_vantage")
-        self.assertEqual(fresh["data_vendors"]["technical_indicators"], "yfinance")
-        self.assertEqual(fresh["data_vendors"]["fundamental_data"], "sec_edgar,yfinance")
-        self.assertEqual(fresh["data_vendors"]["news_data"], "yfinance")
+        self.assertEqual(fresh["data_vendors"]["technical_indicators"],
+                         _DEFAULTS["data_vendors"]["technical_indicators"])
+        self.assertEqual(fresh["data_vendors"]["fundamental_data"],
+                         _DEFAULTS["data_vendors"]["fundamental_data"])
+        self.assertEqual(fresh["data_vendors"]["news_data"],
+                         _DEFAULTS["data_vendors"]["news_data"])
 
     def test_nested_dict_updates_merge_one_level_deep(self):
         set_config({"tool_vendors": {"get_stock_data": "alpha_vantage"}})
@@ -91,11 +101,13 @@ def test_a_run_reads_its_own_graphs_vendors_not_the_last_graph_built():
     """Building a graph sets the process-wide config, and set_config merges, so
     a second graph built with the defaults was served the first one's vendors."""
     first = copy.deepcopy(default_config.DEFAULT_CONFIG)
-    first["tool_vendors"] = {"get_balance_sheet": "sec_edgar,yfinance"}
+    # A sentinel that is deliberately NOT any chain's default, so graph B can only
+    # match it by actually reading graph A's config.
+    first["tool_vendors"] = {"get_balance_sheet": "alpha_vantage"}
     set_config(first)                                   # graph A is built
     second = _graph(copy.deepcopy(default_config.DEFAULT_CONFIG))
 
-    assert _vendors_seen_by_a_run(second) == ["sec_edgar,yfinance"]
+    assert _vendors_seen_by_a_run(second) == [_DEFAULTS["data_vendors"]["fundamental_data"]]
 
 
 @pytest.mark.unit

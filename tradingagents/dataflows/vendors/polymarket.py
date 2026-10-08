@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 import requests
 
 from tradingagents.dataflows.date_window import is_historical
+from tradingagents.dataflows.net import get_with_proxy_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +30,17 @@ DEFAULT_LIMIT = 6
 
 
 def _request(path: str, params: dict) -> dict:
-    response = requests.get(
+    """Fetch a Gamma endpoint, trying every proxy route before giving up.
+
+    This host's HTTP(S)_PROXY can refuse to tunnel overseas domains while the
+    OS-level proxy reaches them fine, so the routes are tried in order instead
+    of trusting the environment's single answer. The fallback ladder (and its
+    process-wide memory of the route that worked) lives in dataflows.net,
+    shared with the other overseas-only vendors.
+    """
+    response = get_with_proxy_fallback(
         f"{GAMMA_BASE}/{path}", params=params, timeout=REQUEST_TIMEOUT
     )
-    response.raise_for_status()
     return response.json()
 
 

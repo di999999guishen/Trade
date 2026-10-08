@@ -1,0 +1,38 @@
+{
+  "window_start": "2019-01-01",
+  "end_exclusive": "2026-09-18",
+  "window_selection": "First full calendar year after all 18 assets have vendor history and after the last observed invalid OHLC row (2018-11-15). Frozen before inspecting strategy returns; 253-session warmup retained. No repairs, interpolation or parameter search. Earlier bad/missing rows remain in raw archives.",
+  "scope": "US-listed ETF/ETP fixed universe; USD; XNYS calendar. Vendor is China-based Sina, assets are NOT China-listed ETFs.",
+  "review_status": "exploratory_sample_checks_only_not_investment_acceptance",
+  "products": {
+    "SPY": {"inception": "1993-01-22", "source": "https://www.ssga.com/library-content/products/factsheets/etfs/us/factsheet-us-en-spy.pdf"},
+    "QQQ": {"inception": "1999-03-10", "source": "https://www.invesco.com/us/financial-products/etfs/product-detail?audienceType=investors&productId=QQQ&ticker=QQQ"},
+    "IWM": {"inception": "2000-05-22", "source": "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"},
+    "MDY": {"inception": "1995-05-04", "source": "https://www.ssga.com/library-content/products/factsheets/etfs/us/factsheet-us-en-mdy.pdf"},
+    "IEF": {"inception": "2002-07-22", "source": "https://www.ishares.com/us/products/239456/ishares-710-year-treasury-bond-etf"},
+    "TLT": {"inception": "2002-07-22", "source": "https://www.ishares.com/us/products/239454/ishares-20-year-treasury-bond-etf"},
+    "GLD": {"inception": "2004-11-18", "source": "https://www.ssga.com/us/en/individual/etfs/spdr-gold-shares-gld"},
+    "XLC": {"inception": "2018-06-18", "source": "https://www.ssga.com/library-content/products/factsheets/etfs/us/factsheet-us-en-xlc.pdf"},
+    "XLRE": {"inception": "2015-10-07", "source": "https://www.ssga.com/library-content/products/factsheets/etfs/us/factsheet-us-en-xlre.pdf"},
+    "XLB": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLE": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLF": {"inception": "1998-12-16", "source": "https://www.ssga.com/library-content/products/factsheets/etfs/us/factsheet-us-en-xlf.pdf"},
+    "XLI": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLK": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLP": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLU": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLV": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"},
+    "XLY": {"inception": "1998-12-16", "source": "https://sectorspdr.factsetdigitalsolutions.com/api/documents/by-fullname/All%20Funds%20Documents/Document%20Resources/10%20Year%20Sector%20Returns"}
+  },
+  "split_source": "https://www.ssga.com/library-content/products/fund-docs/etfs/us/information-schedules/ap-notice/notice-to-aps-stock-splits-11-21-25.pdf",
+  "split_samples": {
+    "XLB": {"2025-12-05": 2.0}, "XLE": {"2025-12-05": 2.0},
+    "XLK": {"2025-12-05": 2.0}, "XLU": {"2025-12-05": 2.0}, "XLY": {"2025-12-05": 2.0}
+  },
+  "dividend_samples": {
+    "QQQ": [{"date": "2025-06-23", "amount": 0.59111, "source": "https://www.invesco.com/us/financial-products/etfs/product-detail?audienceType=investors&productId=QQQ&ticker=QQQ"}]
+  },
+  "volume_samples": {
+    "IWM": {"date": "2026-09-17", "issuer_volume": 22159645, "sina_volume": 22159621, "issuer_close": 285.43, "source": "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf", "interpretation": "24-share provider revision difference; raw-share unit scale agrees, not full-history certification"}
+  }
+}

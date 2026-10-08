@@ -296,12 +296,20 @@ class TradingAgentsGraph:
         Injects the resolved instrument identity for every agent (#814). The
         memory log's lessons are not here: the graph's Memory Log step settles
         and loads them alongside the analysts (see ``_memory_step``).
+
+        A caller-supplied ``screen_evidence_context`` (the daily ETF screen
+        payload rendered by ``tradingagents.evidence_context``) is appended to
+        the instrument context so every analyst sees it; it is part of the run
+        config, so it also feeds ``_run_signature`` and invalidates a stale
+        checkpoint when it changes.
         """
+        instrument_context = self.resolve_instrument_context(company_name, asset_type, trade_date)
+        instrument_context += self.config.get("screen_evidence_context", "") or ""
         return self.propagator.create_initial_state(
             company_name,
             trade_date,
             asset_type=asset_type,
-            instrument_context=self.resolve_instrument_context(company_name, asset_type, trade_date),
+            instrument_context=instrument_context,
             portfolio_context=portfolio.render(company_name) if portfolio is not None else "",
         )
 

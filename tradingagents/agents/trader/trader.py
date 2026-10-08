@@ -37,10 +37,22 @@ def create_trader(llm):
                 "Ground concrete price levels (entry, stop-loss, position sizing) in the technical "
                 "market report's price structure -- current price, support/resistance, ATR, and "
                 "volatility -- and use the research plan for direction and strategy. "
+                "You MUST also fill the price-structure block: current_price (copied from the "
+                "report, never estimated), support_levels (2-4 prices below current price, "
+                "nearest first), resistance_levels (2-4 prices above current price, nearest "
+                "first), invalidation_price (nearest support minus a small ATR-scaled buffer), "
+                "and scale_out_ladder (2-4 rungs, each an absolute trigger_price plus the "
+                "close_pct of the original position to sell there, summing to 100 or less). "
+                "Use the same quote currency as the report. If the report carries no usable "
+                "price structure, leave those fields null instead of inventing numbers. "
             )
             report_section = f"Technical Market Report:\n{market_report}\n\n"
         else:
-            grounding = ""
+            grounding = (
+                "No technical market report is available, so leave current_price, "
+                "support_levels, resistance_levels, invalidation_price and scale_out_ladder "
+                "null rather than inventing price levels. "
+            )
             report_section = ""
 
         messages = [
@@ -48,7 +60,8 @@ def create_trader(llm):
                 "role": "system",
                 "content": (
                     "You are a trading agent analyzing market data to make investment decisions. "
-                    "Based on your analysis, provide a specific recommendation to buy, sell, or hold. "
+                    "Based on your analysis, provide one rating: Buy, Overweight, Hold, Underweight, or Sell. "
+                    "Preserve the research plan's five-level scale unless specific evidence justifies a change. "
                     + grounding
                     # Entry/stop are numeric price fields. Asking for concrete
                     # levels invites a percentage ("15%"), which is not a price
@@ -73,11 +86,16 @@ def create_trader(llm):
                     "## Output\n\n"
                     "Write these sections, in this order, starting with the action "
                     "on its own line:\n\n"
-                    "- **Action**: exactly one of Buy / Hold / Sell. A research "
-                    "recommendation of Overweight is a Buy and Underweight is a Sell, "
-                    "sized by how strong the case is; conflict alone is not a Hold.\n"
+                    "- **Action**: exactly one of Buy / Overweight / Hold / "
+                    "Underweight / Sell — preserve the research plan's five-level "
+                    "scale unless specific evidence justifies a change; conflict "
+                    "alone is not a Hold.\n"
                     "- **Reasoning**: why, against the plan and the price structure\n"
-                    "- **Entry Price**, **Stop Loss**, **Position Sizing**: when you can state them"
+                    "- **Entry Price**, **Stop Loss**, **Position Sizing**: when you can state them\n"
+                    "- **Price structure block**: current price, support/resistance, "
+                    "entry, stop-loss, invalidation price, and the staged scale-out "
+                    "ladder (each rung an absolute trigger price plus the close_pct "
+                    "of the original position to sell there, summing to 100 or less)."
                 ),
             },
         ]

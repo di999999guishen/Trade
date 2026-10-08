@@ -33,7 +33,13 @@ def create_research_manager(llm):
 - **Underweight**: Cautious view; recommend trimming exposure
 - **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
 
-The debate always contains conflicting arguments; deciding which side is stronger is the job, so conflict alone is not a reason to Hold. Commit to the side with the stronger case, sized by how decisively it wins. Choose Hold only when the evidence is still balanced after that weighing, or too thin to support a call; do not manufacture a direction to appear decisive. Weigh the bull and bear cases on their merits, independent of which side spoke first or last.
+The debate always contains conflicting arguments; deciding which side is stronger is the job, so conflict alone is not a reason to Hold. Commit to the side with the stronger case, sized by how decisively it wins. Choose Hold only when the evidence is still balanced after that weighing, or too thin to support a call; do not manufacture a direction to appear decisive. Weigh the bull and bear cases on their merits, independent of which side spoke first or last. Hold can mean balanced evidence or insufficient evidence; explicitly distinguish these reasons. Missing data is not bearish evidence. Do not invent holdings.
+
+In **strategic_actions**, give the trader a concrete level map, not just direction: name the
+reference support and resistance prices quoted by the analysts (absolute prices, not
+percentages), the price or condition that would invalidate the thesis, and how the position
+should be scaled in and out. Only cite levels that appear in the analyst evidence; say
+"levels unavailable" when the evidence has no price structure.
 
 ---
 

@@ -1,0 +1,163 @@
+{
+  "schema_version": "runtime-1.0",
+  "implementation_status": "research_only",
+  "project": "us_etf_quant_research",
+  "mode": "historical_reconstruction",
+  "market": {
+    "calendar": "XNYS",
+    "timezone": "America/New_York",
+    "currency": "USD",
+    "decision_time": "18:00:00",
+    "earliest_execution": "next_session_open",
+    "valuation": "session_close",
+    "daily_signal_evaluation": true,
+    "force_daily_trades": false
+  },
+  "data": {
+    "provider": "sina_us_daily",
+    "budget_usd": 0,
+    "requested_start": "2019-01-01",
+    "end_policy": "latest_completed_and_available_xnys_session",
+    "auto_adjust": false,
+    "actions": true,
+    "price_mode": "adjusted_total_return_proxy",
+    "availability_mode": "reconstructed",
+    "raw_execution_ready": false,
+    "allow_snapshot_overwrite": false,
+    "store": "parquet_duckdb"
+  },
+  "universe": {
+    "version": "us_etf_fixed_exploratory_v1",
+    "selection_status": "fixed_universe_exploratory",
+    "survivorship_bias_resolved": false,
+    "symbols": [
+      "SPY",
+      "QQQ",
+      "IWM",
+      "MDY",
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY",
+      "XLRE",
+      "XLC",
+      "IEF",
+      "TLT",
+      "GLD"
+    ],
+    "minimum_price_observations": 253,
+    "adv_window_sessions": 20,
+    "min_adv_usd": 10000000,
+    "require_inception_check": true,
+    "exclude_leveraged_inverse_etn": true
+  },
+  "strategy": {
+    "id": "s1_etf_momentum",
+    "version": "proposal-v1",
+    "specification": "docs/quant_research/04_STRATEGY_CATALOG.md#s1",
+    "top_k": 5,
+    "initial_selected_weight": 0.2,
+    "unfilled_allocation": "cash",
+    "parameter_status": "initial_research_assumptions_not_optimized"
+  },
+  "portfolio": {
+    "initial_capital_usd": 100000,
+    "long_only": true,
+    "gross_exposure_max": 1.0,
+    "single_asset_weight_max": 0.25,
+    "weight_change_trade_threshold": 0.02,
+    "one_way_turnover_soft_cap": 0.2,
+    "turnover_cap_definition": "half_sum_absolute_weight_changes_including_cash",
+    "emergency_risk_reduction_may_exceed_turnover_cap": true,
+    "technology_proxy_symbols": [
+      "QQQ",
+      "XLK",
+      "XLC"
+    ],
+    "technology_proxy_weight_max": 0.5,
+    "sector_etf_total_weight_max": 0.6,
+    "cash_interest_annual_rate": 0.0,
+    "execution_participation_of_lagged_daily_adv_max": 0.01,
+    "participation_status": "daily_capacity_proxy_not_verified_open_auction_capacity"
+  },
+  "costs": {
+    "model": "all_in_proportional_research_assumption",
+    "base_one_way_bps": 5,
+    "stress_one_way_bps": [
+      10,
+      25
+    ],
+    "apply_to": "each_buy_and_sell_executed_notional",
+    "separate_commission_enabled": false,
+    "fractional_research_units": true,
+    "tax_basis": "pre_tax",
+    "broker_quote_verified": false
+  },
+  "qlib_adapter": {
+    "region": "us",
+    "deal_price": "open_on_same_total_return_adjustment_basis",
+    "trade_unit": null,
+    "limit_threshold": null,
+    "min_cost": 0.0,
+    "impact_cost": 0.0,
+    "volume_threshold": null,
+    "open_cost_mapping": "costs.base_one_way_bps / 10000",
+    "close_cost_mapping": "costs.base_one_way_bps / 10000",
+    "idealized_open_rebalance": true,
+    "signal_shift_validation": "required_against_installed_qlib_version",
+    "note": "This is a proposed adapter schema, not a native Qlib config."
+  },
+  "benchmarks": {
+    "primary": "SPY",
+    "secondary": [
+      "QQQ"
+    ],
+    "return_basis": "total_return_same_price_mode",
+    "baselines": [
+      "buy_hold_spy",
+      "buy_hold_qqq",
+      "eligible_pool_equal_weight",
+      "simple_trend"
+    ]
+  },
+  "statistics": {
+    "risk_free_mode": "zero_assumption_p0",
+    "sharpe_label": "Sharpe_under_explicit_zero_risk_free_assumption",
+    "risk_free_is_independent_of_account_cash_interest": true,
+    "annualization_sessions": 252
+  },
+  "validation": {
+    "train_years": 5,
+    "validation_years": 1,
+    "test_years": 1,
+    "label_horizons_sessions": [
+      5,
+      20
+    ],
+    "label_entry": "open_t_plus_1",
+    "label_exit": "close_t_plus_h",
+    "purge": "overlapping_label_intervals",
+    "group_assets_by_session": true,
+    "holdout_policy": "reserve_only_if_untouched_else_forward",
+    "seed": 42,
+    "first_batch_factor_candidates_max": 20,
+    "model_trials_max": 30,
+    "performance_status": "not_tested"
+  },
+  "features": {
+    "qlib_rule_backtest": true,
+    "lightgbm_training": false,
+    "rd_agent": false,
+    "llm_overlay": false,
+    "llm_api_budget_usd": 0,
+    "lean_audit": false,
+    "shorting": false,
+    "options": false,
+    "broker_connection": false
+  }
+}

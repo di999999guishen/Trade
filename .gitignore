@@ -221,3 +221,18 @@ __marimo__/
 # Enterprise env file (secrets) and generated run reports
 .env.enterprise
 reports/
+
+# Local workspace state (git-filter-repo scratch, agent memory, daily outputs)
+.git-rewrite/
+.workbuddy/
+results/daily/
+
+# One-off probe scripts and snapshots used for manual data investigation.
+# These are throwaway diagnostics, not reusable pipeline code.
+tmp_*.py
+tmp_*.csv
+
+# Personal financial artifacts: real holdings, cost basis and trim/stop plans.
+# Kept on disk for local use only -- must never enter the public repo history
+# (origin is a public GitHub repo).
+etf-position-review-*.html

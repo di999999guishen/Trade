@@ -5,10 +5,15 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import pandas as pd
+
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.market import get_closes
 
 logger = logging.getLogger(__name__)
+
+# A-share / HK suffixes served by the domestic Sina/Tencent loader (#CN).
+_CN_SUFFIXES = (".SS", ".SZ", ".BJ", ".HK")
 
 
 def resolve_benchmark(ticker: str, config: dict) -> str:
@@ -49,6 +54,47 @@ def _by_day(closes):
     return closes
 
 
+def _cn_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
+    """Daily closes for a CN symbol via the domestic Sina/Tencent loader (#CN).
+
+    yfinance cannot serve (or rate-limits) A-share / HK tickers, so settlement
+    of CN decisions would otherwise fail every pass. Returns a Series indexed by
+    bar date, ``get_closes``-compatible: closes from ``start_date`` up to, not
+    including, ``end_date``.
+    """
+    from tradingagents.dataflows.akshare_data import load_ohlcv_akshare
+
+    canonical = normalize_symbol(symbol)
+    # Load as of today, then slice the window ourselves, so a future end_date
+    # never trips the loader's staleness guard.
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    try:
+        df = load_ohlcv_akshare(canonical, today_str)
+    except Exception as exc:  # noqa: BLE001 - surface as "no prices", caller retries
+        logger.warning("Domestic closes unavailable for %s: %s", canonical, exc)
+        return pd.Series(dtype=float)
+    if df is None or df.empty or "Close" not in df.columns or "Date" not in df.columns:
+        return pd.Series(dtype=float)
+
+    dates = pd.to_datetime(df["Date"])
+    window = df.assign(_d=dates)
+    window = window[(window["_d"] >= pd.Timestamp(start_date)) & (window["_d"] < pd.Timestamp(end_date))]
+    window = window.sort_values("_d")
+    if window.empty:
+        return pd.Series(dtype=float)
+    return pd.Series(
+        window["Close"].astype(float).to_numpy(),
+        index=pd.DatetimeIndex(window["_d"]),
+    )
+
+
+def _closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
+    """Closes for ``symbol``: domestic loader for A-share/HK, else yfinance (#CN)."""
+    if normalize_symbol(symbol).upper().endswith(_CN_SUFFIXES):
+        return _cn_closes(symbol, start_date, end_date)
+    return get_closes(symbol, start_date, end_date)
+
+
 def fetch_returns(
     ticker: str, trade_date: str, holding_days: int = 5,
     benchmark: str = "SPY",
@@ -70,10 +116,11 @@ def fetch_returns(
     end_str = end.strftime("%Y-%m-%d")
 
     # Closes for the instrument the analysis priced (XAUUSD -> GC=F, #984).
-    stock = _by_day(get_closes(ticker, trade_date, end_str))
+    # A-share/HK tickers go through the domestic loader instead of yfinance (#CN).
+    stock = _by_day(_closes(ticker, trade_date, end_str))
     # From a week earlier, so the benchmark has a close on or before entry.
     bench_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
-    bench = _by_day(get_closes(benchmark, bench_start, end_str))
+    bench = _by_day(_closes(benchmark, bench_start, end_str))
 
     # Require the full holding window to have traded. A rerun before it has
     # leaves the entry pending to retry next run, rather than settling on a
