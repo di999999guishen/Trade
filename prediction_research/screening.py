@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import gc
 import math
 import hashlib
 import uuid
@@ -219,7 +220,7 @@ def select_etfs(records: list[dict], rules: dict, limit: int | None = None, atr_
     return eligible, selected
 
 
-def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None = None) -> tuple[Path, dict]:
+def _screen_etfs_once(cfg: dict, limit: int | None = None, decision_at_utc: str | None = None) -> tuple[Path, dict]:
     directory = resolve_project_path(cfg, cfg["etf_market"]["snapshot_dir"])
     manifest = json.loads((directory / "latest.json").read_text(encoding="utf-8"))
     snapshot = json.loads(_snapshot_path(directory, manifest).read_text(encoding="utf-8"))
@@ -311,6 +312,35 @@ def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None
         connection.commit()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path, payload
+
+
+def screen_etfs(cfg: dict, limit: int | None = None, decision_at_utc: str | None = None) -> tuple[Path, dict]:
+    """粗筛入口：内存吃紧时回收一次并重试，仍失败才抛出可执行的降级指引。
+
+    ``screen_etfs`` 是整条链里唯一会对成千上万条快照记录一次性建行、打分的步骤，
+    峰值内存远高于其它步骤。当它被**嵌在同一进程**里跑（cycle 第 3 步，或 fetch-etfs
+    之后紧接着跑）时，前面步骤遗留的对象（大快照 dict、循环引用）会把峰值顶到内存
+    上限并抛 ``MemoryError``；单独起新进程跑同一步则正常——这正是记忆里
+    「先单独跑 screen-etfs 再整体重跑」的由来。
+
+    这里把该变通自动化：先 ``gc.collect()`` 回收上一步遗留的垃圾再跑；万一仍触发
+    ``MemoryError``，回收后重试一次；再失败才抛出带行动指引的 ``MemoryError``，
+    而不是把裸异常甩给上层。``_screen_etfs_once`` 全程走 ``INSERT OR IGNORE`` /
+    ``ON CONFLICT DO NOTHING``，重复执行不会产生重复行，故重试是安全的。
+    """
+    gc.collect()  # 回收上一步的大对象，降低本次峰值
+    try:
+        return _screen_etfs_once(cfg, limit, decision_at_utc)
+    except MemoryError:
+        gc.collect()
+        try:
+            return _screen_etfs_once(cfg, limit, decision_at_utc)
+        except MemoryError as exc:
+            raise MemoryError(
+                "screen-etfs 连续两次内存不足。请先单独在全新进程里跑 "
+                "`python run_research.py screen-etfs`，成功后再重跑整条流程。"
+                "（已知问题：内存会跨同进程步骤累积。）"
+            ) from exc
 
 
 def latest_screen(cfg: dict) -> tuple[Path, dict]:

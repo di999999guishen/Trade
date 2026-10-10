@@ -395,6 +395,27 @@ def get_income_statement_eastmoney(ticker: str, freq: str = "quarterly", curr_da
     return _etf_statement_not_applicable(ticker, "利润表")
 
 
+def get_insider_transactions_eastmoney(ticker: str, trade_date: str = None) -> str:
+    """境内（自建）口径的「内部人交易」占位实现 —— 显式不可用，绝不编造。
+
+    背景（2026-10-08 排查）：上游 v0.6.0 新增 ``get_insider_transactions`` 工具，
+    但 ``VENDOR_METHODS`` 里只有 ``alpha_vantage`` / ``yfinance`` 两个实现；本项目
+    ``data_vendors`` 全线走国内源（news_data=eastmoney），路由因此抛
+    ``ValueError: Configured vendor(s) ['eastmoney'] not available``，
+    使整轮 TradingAgents 分析中断——10/08 实测 10/10 候选全部 rc=1 失败。
+
+    该工具属 ``news_data`` 类别（非 OPTIONAL_CATEGORIES），异常会直接冒泡终止运行，
+    所以必须补一个国内实现。境内数据源没有 SEC Form 4 式「董监高/大股东买卖本公司
+    证券」口径（ETF 更不适用），因此这里如实返回 DATA_UNAVAILABLE 哨兵，让分析师
+    记录缺数据，而不是让流程崩溃，也不是编造数值。
+    """
+    return (
+        f"DATA_UNAVAILABLE: 境内数据源（东方财富/新浪/akshare）不提供 {ticker} 的"
+        f"内部人交易数据（SEC Form 4 式董监高/大股东增减持）；本项目按约束已禁用 "
+        f"yfinance / alpha_vantage。请如实标注该数据项不可用，不要估算或编造数值。"
+    )
+
+
 # ── Instrument identity (no yfinance) ────────────────────────────────────────
 
 @functools.lru_cache(maxsize=256)

@@ -48,6 +48,9 @@ def parser() -> argparse.ArgumentParser:
     agents_plan.add_argument("--top", type=int, default=5)
     agents = commands.add_parser("run-agents", help="run TradingAgents only for the frozen coarse-screen candidates")
     agents.add_argument("--top", type=int, default=5)
+    agents.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True,
+                        help="skip candidates already completed for this frozen screen batch; "
+                             "use --no-resume to force a full re-run of every candidate")
     screened = commands.add_parser("fetch-screened", help="fetch daily histories for frozen screen candidates")
     screened.add_argument("--top", type=int, default=20)
     commands.add_parser("settle-agents", help="settle successful TradingAgents directions at configured horizons")
@@ -183,8 +186,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "run-agents":
             from .tradingagents_adapter import run_tradingagents
 
-            path, payload = run_tradingagents(cfg, args.top)
-            result = {"result_path": str(path.resolve()), "items": payload["items"]}
+            path, payload = run_tradingagents(cfg, args.top, resume=args.resume)
+            result = {"result_path": str(path.resolve()), "items": payload["items"],
+                      "resume_enabled": payload.get("resume_enabled"),
+                      "resumed_reused": payload.get("resumed_reused")}
         elif args.command == "fetch-screened":
             from .screening import latest_screen
 

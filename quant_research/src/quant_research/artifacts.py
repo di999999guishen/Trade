@@ -1,7 +1,6 @@
 """Content hashes and atomic publication; never overwrite a published run."""
 import json
 import os
-import platform
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -10,6 +9,29 @@ from hashlib import sha256
 from importlib import metadata
 from pathlib import Path
 from uuid import uuid4
+
+
+def platform_label():
+    """WMI-free OS label.
+
+    platform.platform() routes through platform.win32_ver() -> WMI on Windows and
+    can block for minutes when the WMI service is degraded. Build the label from
+    sys / os.environ only.
+    """
+    parts = [sys.platform]
+    get_windows_version = getattr(sys, "getwindowsversion", None)
+    if get_windows_version is not None:
+        try:
+            windows = get_windows_version()
+            parts.append(f"win{windows.major}.{windows.minor}.{windows.build}")
+        except Exception:
+            pass
+    architecture = os.environ.get("PROCESSOR_ARCHITECTURE") or os.environ.get("HOSTTYPE")
+    if architecture:
+        parts.append(str(architecture).lower())
+    info = sys.version_info
+    parts.append(f"python{info.major}.{info.minor}.{info.micro}")
+    return "-".join(str(part) for part in parts if part)
 
 
 def utc_now():
@@ -67,7 +89,7 @@ def provenance(project):
                 code[path.relative_to(project).as_posix()] = file_hash(path)
     lock = project / "uv.lock"
     return {
-        "python": sys.version, "executable": sys.executable, "platform": platform.platform(),
+        "python": sys.version, "executable": sys.executable, "platform": platform_label(),
         "git_commit": git("rev-parse", "HEAD").decode().strip() or None,
         "dirty_diff_hash": sha256(git("diff", "HEAD", "--", ".")).hexdigest(),
         "source_files": code, "source_hash": digest(code),

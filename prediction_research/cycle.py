@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import platform
 import sys
 import uuid
 from datetime import datetime
@@ -19,6 +18,7 @@ from .evidence import now_utc, utc
 from .flow_backtest import run_flow_backtest
 from .pipeline import run_backtest, run_prediction, settle_predictions
 from .reporting import build_research_report
+from .runtime_env import platform_label
 from .screening import ingest_etf_snapshot, screen_etfs, settle_screen_selections
 from .settlement import pending_history_assets
 from .store import connect, record_run
@@ -69,7 +69,9 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
               "result_path": str(path.resolve())}
     module_root = Path(__file__).resolve().parent
     source_files = sorted(module_root.glob("*.py")) + sorted((module_root / "adapters").glob("*.py"))
-    report["runtime"] = {"python": sys.version, "platform": platform.platform(),
+    # 只记不触 WMI 的标签：platform.platform() 在 Windows 走 WMI（win32_ver ->
+    # _wmi_query），WMI 服务退化时会挂死数分钟，把整条 cycle 拖成"像是卡住"。
+    report["runtime"] = {"python": sys.version, "platform": platform_label(),
                          "source_sha256": {str(source.relative_to(module_root)).replace("\\", "/"):
                                            hashlib.sha256(source.read_bytes()).hexdigest() for source in source_files}}
 
@@ -209,14 +211,29 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
         step(f"predict_{horizon}d", predict)
 
     llm_disabled_reason = None
+    llm_produced = 0
+    llm_reused = 0
     if cfg.get("workflow", {}).get("skip_tradingagents"):
         report["steps"].append({"name": "tradingagents", "status": "skipped_by_configuration",
                                 "reason": "skip_tradingagents"})
         llm_disabled_reason = "skip_tradingagents"
     elif screen_context and history_ready:
-        agent_run = step("tradingagents", lambda: str(run_tradingagents(cfg, min(top_n, int(cfg.get("workflow", {}).get("agent_top_n", 5))))[0]))
+        agent_payload: dict = {}
+
+        def run_agents_action():
+            path, payload = run_tradingagents(cfg, min(top_n, int(cfg.get("workflow", {}).get("agent_top_n", 5))))
+            agent_payload.update(payload)
+            return str(path)
+
+        agent_run = step("tradingagents", run_agents_action)
         if agent_run is None:
             llm_disabled_reason = "tradingagents_step_failed"
+        else:
+            # 本轮真正产出的可用分析条数（status=ok）。它是「有没有 LLM 覆盖」的直接
+            # 证据；而 settled 只统计已到结算期、能算出对错的那部分。reused 是其中
+            # 复用本决策日已有结论、未重新调用 LLM 的部分，单列以示区别。
+            llm_produced = sum(1 for item in agent_payload.get("items", []) if item.get("status") == "ok")
+            llm_reused = sum(1 for item in agent_payload.get("items", []) if item.get("reused"))
     else:
         blocked("tradingagents", "current_candidates_not_ready")
         llm_disabled_reason = "current_candidates_not_ready"
@@ -230,14 +247,21 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
     llm_skip_flag = bool(cfg.get("workflow", {}).get("skip_tradingagents"))
     # settle 会补结历史遗留的分析，所以「结算条数 > 0」不等于本轮真跑了 LLM：
     # 只要开关跳过或本轮 step 没跑成，就算没有 LLM 覆盖。
+    #
+    # 反过来，「结算条数 == 0」也**不等于**本轮没跑 LLM：当日新产出的分析要等
+    # horizon（5/20 个交易日）走完才有实际收益可结算，当天必然 settled=0。
+    # 2026-10-08/10-09 就是这样被误判成 `_without_llm`，报告里明明有 10 条
+    # TradingAgents 结论却写着「缺少 LLM 交叉验证」。故 usable 判据补上 produced。
     report["llm_coverage"] = {"analyses_settled": llm_settled,
+                              "analyses_produced": llm_produced,
+                              "analyses_reused": llm_reused,
                               "skip_flag": llm_skip_flag, "skip_reason": llm_disabled_reason,
-                              "usable": llm_settled > 0 and not llm_skip_flag}
+                              "usable": (llm_produced > 0 or llm_settled > 0) and not llm_skip_flag}
     report["warnings"] = []
     if not report["llm_coverage"]["usable"]:
         report["warnings"].append({
             "code": "llm_step_not_run", "severity": "warning",
-            "message": "本轮没有任何 TradingAgents 分析被结算；报告结论仅为模型口径，缺少 LLM 交叉验证。",
+            "message": "本轮没有任何 TradingAgents 分析被产出或结算；报告结论仅为模型口径，缺少 LLM 交叉验证。",
             "reason": llm_disabled_reason or "tradingagents_produced_no_settled_analyses"})
 
     def outcome():

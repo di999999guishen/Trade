@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import resolve_project_path
@@ -83,6 +84,126 @@ def _discrimination_label(row: dict) -> str:
     return labels.get(status, str(status))
 
 
+def _screen_trade_date(screen: dict | None) -> str | None:
+    """冻结候选对应的决策日：取候选里最新的行情时间戳（北京时间）。"""
+    if not screen:
+        return None
+    epochs = [int(row["quote_epoch"]) for row in screen.get("selected", []) if row.get("quote_epoch")]
+    if not epochs:
+        return None
+    return datetime.fromtimestamp(max(epochs), timezone(timedelta(hours=8))).date().isoformat()
+
+
+def _norm_key(value: str) -> str:
+    """把标签/键归一化到「仅小写字母数字」，用于跨写法比对。
+
+    模型产出的同一字段有两大类写法：`**Current Price**: 1.301` 与 `- current_price: 1.301`。
+    归一化后 `Current Price` / `current_price` / `CurrentPrice` 都塌缩成 `currentprice`，一次比对即可覆盖。
+    """
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _agent_field(text: str, *labels: str) -> str | None:
+    """从组合经理段落抓字段值，缺字段一律返回 None（渲染为`未记录`），不猜。
+
+    支持两种写法，模型两种都产出过：
+      ① 加粗行内：`**Current Price**: 1.301` / `**Support Levels** (nearest first): ...`
+      ② 项目符号：`- current_price: 1.301` / `- **stop_loss**: 1.270`
+    键名按 `_norm_key` 归一化比对，故下划线/空格/大小写差异都能对上。
+
+    两个坑：① 字段名后可能跟括号注解；② 报告前半段的分析师/研究员各有一份 `**Rating**`，
+    全局取第一个会抓到中间环节评级。故先切到最后的「Portfolio Manager」段落再搜。
+    """
+    index = text.rfind("Portfolio Manager")
+    scope = text[index:] if index >= 0 else text
+    targets = {_norm_key(label): label for label in labels}
+    found: dict[str, str] = {}
+    for line in scope.splitlines():
+        match = re.match(r"^\s*\*\*(.+?)\*\*\s*(?:\([^)]*\))?\s*[:：]\s*(.+?)\s*$", line)
+        if match is None:
+            # `- key: value` / `- **key**: value`；键只允许字母数字下划线空格斜杠，避免吞掉纯数值行。
+            match = re.match(r"^\s*[-*]\s*\*{0,2}([A-Za-z_][A-Za-z0-9_ /]*?)\*{0,2}\s*[:：]\s*(.+?)\s*$", line)
+        if match is None:
+            continue
+        key = _norm_key(match.group(1))
+        if key in targets and match.group(2).strip():
+            found[key] = match.group(2).strip()
+    for label in labels:
+        value = found.get(_norm_key(label))
+        if value:
+            return value
+    return None
+
+
+def _agent_ladder(text: str) -> str | None:
+    """抓「Scale-out Ladder」表格的档位，压成 `价→比例%` 一行。
+
+    坑：`scale-out ladder`(连字符) 与 `scale_out_ladder`(下划线) 两种写法并存，且交易员段与
+    组合经理段各有一张同名表。故先把搜索限定在最后的「Portfolio Manager」段落，再取该段内
+    最后一次出现的梯子标记（兼容连字符/下划线/空格），只解析其后的第一张表。
+    """
+    index = text.rfind("Portfolio Manager")
+    scope = text[index:] if index >= 0 else text
+    matches = list(re.finditer(r"scale[-_ ]out[-_ ]ladder", scope, re.IGNORECASE))
+    if not matches:
+        return None
+    tail = scope[matches[-1].end():]
+    rungs = re.findall(r"^\|\s*\d+\s*\|\s*([\d.]+)\s*\|\s*(\d+)\s*\|", tail, re.MULTILINE)
+    return " / ".join(f"{price}→{pct}%" for price, pct in rungs) or None
+
+
+def _agent_conclusions(cfg: dict, trade_date: str | None) -> list[dict]:
+    """决策日当天已产出的 TradingAgents 逐标的结论。
+
+    为什么按 analysis_date 而不是本轮 screen_report 取
+    --------------------------------------------------
+    报告的价值在于「这一天多智能体对这批候选说了什么」。同一天重跑 cycle 会生成
+    新的 screen_report 文件名（时间戳），若按 screen_report 过滤，重跑后报告就会
+    丢掉全部历史结论。故按决策日取，并逐条标注是否已结算。
+
+    为什么还要按 ticker 去重
+    ------------------------
+    `agent_analyses` 的唯一约束是 (screen_report, ticker, analysis_date, agent_system)。
+    同一天重跑 cycle（新 screen_report）会为同一标的再落一行重复结论——2026-10-10
+    实测重跑后同一个决策日从 12 行涨到 22 行，报告 TA 章节每只标的出现两次、还声明
+    「共 22 只」。适配器侧已改为复用时不重复入库；这里再加一道按标的去重兜底（保留
+    最新一条），即使旧数据残留也不会污染报告。
+    """
+    if not trade_date:
+        return []
+    with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
+        rows = connection.execute(
+            "SELECT ticker, symbol, decision_text, report_dir, created_at_utc FROM agent_analyses "
+            "WHERE analysis_date=? AND agent_system='TradingAgents' AND status='ok' "
+            "AND decision_text IS NOT NULL AND TRIM(decision_text) <> '' "
+            "ORDER BY ticker, created_at_utc DESC",
+            (trade_date,),
+        ).fetchall()
+    # 已按 created_at_utc 降序，每个 ticker 首次出现即最新一条。
+    latest: dict[str, tuple] = {}
+    for ticker, symbol, decision, report_dir, _created in rows:
+        latest.setdefault(ticker, (ticker, symbol, decision, report_dir))
+    conclusions = []
+    for ticker, symbol, decision, report_dir in latest.values():
+        complete_report = Path(report_dir) / "complete_report.md" if report_dir else None
+        available = bool(complete_report and complete_report.exists())
+        text = complete_report.read_text(encoding="utf-8", errors="replace") if available else ""
+        conclusions.append({
+            "ticker": ticker, "symbol": symbol, "rating": (decision or "").strip(),
+            "current_price": _agent_field(text, "Current Price"),
+            "support": _agent_field(text, "Support Levels", "Support Level"),
+            "resistance": _agent_field(text, "Resistance Levels", "Resistance Level"),
+            "entry": _agent_field(text, "Entry / Add Zone", "Entry Zone"),
+            "stop_loss": _agent_field(text, "Stop Loss"),
+            "reduce_trigger": _agent_field(text, "Reduce Trigger"),
+            "price_target": _agent_field(text, "Price Target"),
+            "horizon": _agent_field(text, "Time Horizon"),
+            "ladder": _agent_ladder(text),
+            "report": str(complete_report) if available else "报告文件缺失",
+        })
+    return conclusions
+
+
 def build_research_report(cfg: dict, context: dict | None = None) -> Path:
     runs = resolve_project_path(cfg, cfg["runs_dir"])
     runs.mkdir(parents=True, exist_ok=True)
@@ -125,8 +246,36 @@ def build_research_report(cfg: dict, context: dict | None = None) -> Path:
             lines.append(f"| {_cell(warning.get('code'))} | {_cell(warning.get('severity'))} | {_cell(warning.get('message'))}（原因：`{_cell(warning.get('reason'))}`） |")
     if context.get("llm_coverage"):
         coverage = context["llm_coverage"]
-        lines.extend(["", f"TradingAgents 覆盖：本轮结算 {coverage.get('analyses_settled', 0)} 条；可用：{'是' if coverage.get('usable') else '否'}"
-                          + (f"（跳过原因：`{coverage.get('skip_reason')}`）" if coverage.get("skip_reason") else "") + "。"])
+        produced = coverage.get("analyses_produced")
+        reused = coverage.get("analyses_reused") or 0
+        produced_text = ""
+        if produced is not None:
+            produced_text = f"本轮产出 {produced} 条" + (f"（其中复用本决策日已有结论 {reused} 条）" if reused else "") + "；"
+        lines.extend(["", f"TradingAgents 覆盖：{produced_text}本轮结算 {coverage.get('analyses_settled', 0)} 条；可用：{'是' if coverage.get('usable') else '否'}"
+                          + (f"（跳过原因：`{coverage.get('skip_reason')}`）" if coverage.get("skip_reason") else "") + "。",
+                      "结算数少于产出数属正常：当日新产出的分析要等 5/20 个交易日走完才有实际收益可对错。",])
+    agent_trade_date = _screen_trade_date(screen)
+    conclusions = _agent_conclusions(cfg, agent_trade_date)
+    if conclusions:
+        lines.extend(["", f"## TradingAgents 多智能体结论（决策日 {agent_trade_date}）", "",
+                      "多智能体链路（基本面/技术/情绪/新闻分析师 → 多空辩论 → 交易员 → 风险委员会 → 组合经理）对当日冻结候选的逐标的结论。",
+                      "评级与点位取自各标的 `complete_report.md` 的组合经理段落；显示 `未记录` 表示该字段缺失，不是 0。",
+                      "`增持/减持` 表达的是敞口调整，不是绝对涨跌预测。",
+                      "",
+                      "| ETF | 评级 | 当前价 | 支撑位 | 阻力位 | 目标价 | 止损 | 时间维度 |",
+                      "|---|---|---:|---|---|---:|---:|---|"])
+        for row in conclusions:
+            lines.append(f"| {row['symbol']} | {_cell(row['rating'])} | {_cell(row['current_price'])} | "
+                         f"{_cell(row['support'])} | {_cell(row['resistance'])} | {_cell(row['price_target'])} | "
+                         f"{_cell(row['stop_loss'])} | {_cell(row['horizon'])} |")
+        lines.extend(["", "### 逐标的操作细节", "",
+                      "| ETF | 入场/加仓区 | 减仓触发 | 分批减仓梯子 | 报告 |",
+                      "|---|---|---|---|---|"])
+        for row in conclusions:
+            lines.append(f"| {row['symbol']} | {_cell(row['entry'])} | {_cell(row['reduce_trigger'])} | "
+                         f"{_cell(row['ladder'])} | `{row['report']}` |")
+        lines.extend(["", f"共 {len(conclusions)} 只标的有多智能体结论（决策日 {agent_trade_date}）。"
+                          "结论为单一决策时点的判断，不构成连续跟踪；已结算的对错统计见 `agent_outcomes`。"])
     if "prediction_eligible_symbols" in context:
         lines.extend(["", f"预测覆盖：申请候选 {context.get('prediction_candidate_count', 0)} 只；数据检查后可预测 {len(context['prediction_eligible_symbols'])} 只；本轮实际引用冻结预测 {len({row['symbol'] for row in predictions})} 只 / {len(predictions)} 条（标的×周期）。"])
     if context.get("prediction_exclusions"):

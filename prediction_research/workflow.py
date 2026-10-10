@@ -20,6 +20,9 @@ def workflow_status(cfg: dict) -> dict:
     agent_items = batch.get("items", []) if batch else []
     agent_successes = sum(item.get("status") == "ok" for item in agent_items)
     auth_blocked = any(item.get("error_class") == "authentication" for item in agent_items)
+    # 限流（HTTP 429）同样会让整批候选同败——adapter 侧已做退避重试并熔断，
+    # 此处把结果暴露到 workflow 层，避免「429 熔断」在状态里被误报成一般 pending。
+    rate_limited = any(item.get("error_class") == "rate_limited" for item in agent_items)
     agent_skipped = bool(cfg.get("workflow", {}).get("skip_tradingagents"))
     db_path = resolve_project_path(cfg, cfg["state_db"])
     selected_symbols = [row["symbol"] for row in screen.get("selected", [])] if screen else []
@@ -53,12 +56,12 @@ def workflow_status(cfg: dict) -> dict:
         {"stage": 1, "name": "ETF分类口径", "status": "complete", "evidence": str((project / "docs" / "ETF_TAXONOMY_AND_LABELS.md").resolve())},
         {"stage": 2, "name": "ETF行情板块快照", "status": "complete" if snapshot else "pending", "records": snapshot.get("records") if snapshot else 0, "coverage_caveat": "尚缺交易所合同级债券/多资产清单"},
         {"stage": 3, "name": "资金流粗筛与候选冻结", "status": "complete" if screen else "pending", "eligible": screen.get("eligible_records") if screen else 0, "selected": len(screen.get("selected", [])) if screen else 0, "open_forward_selections": open_screen_selections, "historical_observation_days": flow_observation_days, "historical_screen_validation_ready": flow_observation_days >= 60, "report": str(screens[0].resolve()) if screens else None},
-        {"stage": 4, "name": "TradingAgents深度分析", "status": "skipped_by_user" if agent_skipped else "blocked_authentication" if auth_blocked and not agent_successes else "complete" if agent_successes else "pending", "successful": agent_successes, "attempted": len(agent_items), "report": str(batches[0].resolve()) if batches else None},
+        {"stage": 4, "name": "TradingAgents深度分析", "status": "skipped_by_user" if agent_skipped else "blocked_authentication" if auth_blocked and not agent_successes else "blocked_rate_limit" if rate_limited and not agent_successes else "complete" if agent_successes else "pending", "successful": agent_successes, "attempted": len(agent_items), "report": str(batches[0].resolve()) if batches else None},
         {"stage": 5, "name": "智能体结论入证据层", "status": "skipped_no_agent_evidence" if agent_skipped and not agent_successes else "complete" if agent_successes else "waiting_for_stage_4"},
         {"stage": 6, "name": "预测冻结与到期复盘", "status": "research_predictions_frozen" if frozen_predictions else "quantitative_path_ready" if agent_skipped else "waiting_for_stage_5" if not agent_successes else "ready", "current_screen_open_predictions": frozen_predictions, "all_open_predictions": all_open_predictions, "recorded_cycle_runs": recorded_cycle_runs, "successful_cycle_runs": successful_cycle_runs, "latest_cycle": str(cycle_paths[0].resolve()) if cycle_paths else None},
         {"stage": 7, "name": "TradingAgents独立增益验证", "status": "deferred_while_agents_skipped" if agent_skipped else "pending", "note": "不得把多角色一致意见直接当作概率"},
     ]
-    result = {"current_stage": 6 if agent_skipped else 4 if not agent_successes else 5, "active_path": "quantitative_without_tradingagents" if agent_skipped else "full", "blocking_reason": None if agent_skipped else "DeepSeek authentication failed (HTTP 401)" if auth_blocked and not agent_successes else None, "stages": stages}
+    result = {"current_stage": 6 if agent_skipped else 4 if not agent_successes else 5, "active_path": "quantitative_without_tradingagents" if agent_skipped else "full", "blocking_reason": None if agent_skipped else "DeepSeek authentication failed (HTTP 401)" if auth_blocked and not agent_successes else "DeepSeek rate limited (HTTP 429); batch halted after backoff retries" if rate_limited and not agent_successes else None, "stages": stages}
     # Observation count alone does not establish complete prices, matured labels or OOS coverage.
     stages[2].update(historical_screen_validation_ready=False, historical_validation_status="not_run")
     if cycle_paths:

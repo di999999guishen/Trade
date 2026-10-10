@@ -98,7 +98,7 @@ top10 候选的：定量涨概率（5日/20日）、质量门状态、资金流�
 - **5 日模型零区分度**：五只概率全等、`discrimination_status=baseline_only`。与「全库 `probability_status` 无一通过校验」并案排查**校准环节**。
 - **选股闸门**：`selection_usable` 判据是 `signal_verdict` 的 **ICIR ≥ 0.30**。生产 h20 实测 ICIR **−0.1634** → **选股用途一律禁用**，模型只能当择时/仓位开关。
 - **结论漂移**：同一份数据不同日跑结论会漂移（同为 9/24 收盘，9/25 Hold、9/26 Underweight）。
-- **停用成交额类特征**必须动手——新浪源本就无成交额，该特征是残缺输入。
+- **停用成交额类特征**——✅ **已核实并加守卫**（2026-10-10）：模型特征里**从来没有**成交额类量（`FEATURE_NAMES`/`EXTERNAL_FEATURE_NAMES` 只含价格/收益率/波动/`volume_ratio_20`）。日线缓存的 `amount` 列在本管道里恒为常量占位（新浪写死 `"0"`、腾讯 `df["amount"]=0`），从未被任何特征消费；真实成交额仅在**资金流快照**里、只供粗筛 `liquidity` 因子使用。`features.py` 现加导入期守卫 `_assert_no_amount_features(...)`，误加成交额类量会直接 import 失败。
 
 ---
 
@@ -121,7 +121,7 @@ top10 候选的：定量涨概率（5日/20日）、质量门状态、资金流�
 |---|---|
 | 研究报告 | `prediction_research/runs/research_report_*.md` |
 | cycle 结果 JSON | `prediction_research/runs/cycle_<date>_<ts>_<id>.json` |
-| 回填报告 | `outputs/backfill_report_<YYYYMMDD>.md`（需手工补写，09-24 起持续不生成） |
+| 回填报告 | `outputs/backfill_report_<YYYYMMDD>.md`（✅ 2026-10-10 起由 `run_backfill` **自动生成**；人工撰写版会被先备份为 `*.manual.md`） |
 | 休市简报 | `prediction_research/runs/etf_holiday_brief_<YYYYMMDD>.md` |
 | run-agents 分析 | `prediction_research/runs/tradingagents/<symbol>_<trade_date>/complete_report.md` + 批次 `runs/tradingagents_batch_<ts>.json` |
 | 日线缓存 | `prediction_research/datasets/market/cache_<symbol>.csv` |

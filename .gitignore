@@ -236,3 +236,7 @@ tmp_*.csv
 # Kept on disk for local use only -- must never enter the public repo history
 # (origin is a public GitHub repo).
 etf-position-review-*.html
+
+# Runtime logs and one-off market-probe snapshots (throwaway diagnostics).
+logs/
+prediction_research/runs_mf_probe_*/

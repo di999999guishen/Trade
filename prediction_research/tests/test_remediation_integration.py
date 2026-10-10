@@ -22,6 +22,9 @@ def test_default_expands_quantitative_coverage_without_expanding_llm(cfg):
 
 def test_missing_one_history_does_not_block_two_ready_candidates(cfg, monkeypatch):
     write_histories(cfg)
+    # 本用例只验证「单只缺历史不阻塞其余候选」的数据就绪语义，不涉及 LLM。
+    # 生产配置 2026-10 起 skip_tradingagents=False，若不钉住会真的去调 LLM（极慢且需密钥）。
+    cfg["workflow"]["skip_tradingagents"] = True
     missing = {**flow_row("515220"), "name": "煤炭ETF测试"}
     snapshot(cfg, [flow_row(), flow_row("159934"), missing])
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
@@ -37,6 +40,8 @@ def test_missing_one_history_does_not_block_two_ready_candidates(cfg, monkeypatc
 def test_archive_failure_is_persisted_as_operational_failure(cfg, monkeypatch):
     write_histories(cfg)
     snapshot(cfg)
+    # 本用例验证归档失败被记为运维失败，与 LLM 无关；钉住开关避免真调 LLM。
+    cfg["workflow"]["skip_tradingagents"] = True
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
     def fail(*args):
         raise ArchiveError("disk failure")
@@ -51,6 +56,8 @@ def test_archive_failure_is_persisted_as_operational_failure(cfg, monkeypatch):
 def test_archive_cli_reuses_runtime_candidate_config(cfg, monkeypatch):
     write_histories(cfg)
     snapshot(cfg)
+    # 本用例验证 archive-cycle/verify-archive 复用运行时配置，与 LLM 无关；钉住开关。
+    cfg["workflow"]["skip_tradingagents"] = True
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
     result = run_cycle(cfg, 2, True)
     monkeypatch.setattr("prediction_research.cli.load_config", lambda _: cfg.copy())
@@ -102,6 +109,11 @@ def test_report_uses_same_date_quality_gate(cfg, tmp_path):
 
 def test_feature_history_without_mature_training_labels_waits(cfg, monkeypatch):
     write_histories(cfg)
+    # 生产配置 2026-10 已把 skip_tradingagents 由 True 翻成 False；本用例验证的是
+    # 「无成熟训练样本 → waiting」这条不涉 LLM 的路径，必须显式钉住前置条件。
+    # 否则 history_ready 为真时会真的去调 LLM，令 tradingagents 步骤 failed →
+    # outcome 变成 partial_failure，与本用例断言的 _without_llm 语义不再对应。
+    cfg["workflow"]["skip_tradingagents"] = True
     for path in (Path(cfg["_project_dir"]) / cfg["market_data_dir"]).glob("cache_*.csv"):
         lines = path.read_text(encoding="utf-8").splitlines()
         path.write_text("\n".join(lines[:1] + lines[-61:]) + "\n", encoding="utf-8")

@@ -16,6 +16,14 @@ from pathlib import Path
 
 # 🔧 代理绕过（必须在所有网络 import 之前）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# 🔧 WMI 守卫（必须在 import pandas/yfinance 之前）：WMI 服务退化时，
+# pandas 在导入期调用的 platform.machine() 会挂死数分钟。详见 wmi_guard.py。
+try:
+    import wmi_guard  # noqa: F401
+except Exception:  # pragma: no cover - 缺失时不阻断
+    pass
+
 try:
     from retry_utils import setup_proxy_bypass
 
@@ -79,6 +87,18 @@ def main() -> int:
         "macro_data": "akshare_macro",
         "prediction_markets": "polymarket",
     }
+    # 🔴 国内源补丁（2026-10-08）：上游 v0.6.0 新增的 get_insider_transactions 只有
+    # alpha_vantage / yfinance 实现，与本项目「全程国内源」冲突，会让整个分析在
+    # Fundamentals Analyst 处抛 ValueError 直接中断（当日 10/10 候选全失败）。
+    # 这里在运行时补一个自建东财实现（显式 DATA_UNAVAILABLE 哨兵），并显式路由到它。
+    # 不改上游 router.py，避免下次上游同步产生无谓冲突。
+    from tradingagents.dataflows import router as _dataflow_router
+    from tradingagents.dataflows.eastmoney_data import get_insider_transactions_eastmoney
+
+    _dataflow_router.VENDOR_METHODS.setdefault("get_insider_transactions", {})[
+        "eastmoney"
+    ] = get_insider_transactions_eastmoney
+    config["tool_vendors"] = {"get_insider_transactions": "eastmoney"}
 
     if args.screen_evidence:
         from tradingagents.evidence_context import render_screen_evidence

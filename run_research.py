@@ -21,6 +21,13 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_DIR))
 
+# 🔧 WMI 守卫（必须在 import pandas/yfinance 之前）：WMI 服务退化时，
+# pandas 在导入期调用的 platform.machine() 会挂死数分钟。详见 wmi_guard.py。
+try:
+    import wmi_guard  # noqa: F401
+except Exception:  # pragma: no cover - 缺失时不阻断
+    pass
+
 # 🔧 代理绕过（必须在所有网络请求之前）
 try:
     from retry_utils import setup_proxy_bypass

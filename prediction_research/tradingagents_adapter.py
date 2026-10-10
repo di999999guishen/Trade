@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import re
+import sys
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +25,42 @@ def _ticker(row: dict) -> str:
 def _safe_tail(value: str) -> str:
     value = re.sub(r"(?i)(api[ _-]?key[^\n:]*[:=]\s*)[^\s,'\"}]+", r"\1[REDACTED]", value)
     return value[-2000:]
+
+
+# 一次失败是否会让**整批**候选同样失败。凭证失效与限流都属这一类：继续把剩下的候选
+# 跑完只会把一次故障放大成 N 次失败。旧实现正是如此——429 被判成 "runtime"，
+# 既不重试也不熔断，剩余候选逐个重跑、逐个失败（记忆 R7 挂账未修项）。
+_BATCH_FATAL_CLASSES = frozenset({"authentication", "rate_limited"})
+
+_AUTH_MARKERS = ("authentication", "unauthorized", "invalid api key", "invalid_api_key",
+                 "insufficient balance", "account is not active")
+_RATE_LIMIT_MARKERS = ("rate limit", "rate_limit", "ratelimit", "too many requests",
+                       "当前访问量过大", "访问量过大", "请求过于频繁", "限流", "quota exceeded")
+
+
+def _http_status_present(text: str, status: int) -> bool:
+    """匹配独立出现的 HTTP 状态码，避免把 4290ms / 1401 这类数字误判成 429/401。"""
+    return re.search(rf"(?<!\d){status}(?!\d)", text) is not None
+
+
+def _classify_failure(returncode: int, stderr_tail: str) -> str | None:
+    """把一次 LLM 子进程失败归类，供批次熔断与退避重试决策使用。
+
+    - ``None``：成功。
+    - ``authentication``：凭证问题，后续候选必然同败 ⇒ 熔断。
+    - ``rate_limited``：限流（HTTP 429 / 供应商限速文案），可退避重试；重试耗尽后熔断。
+    - ``timeout`` / ``runtime``：单只问题，不牵连整批。
+    """
+    if not returncode:
+        return None
+    lowered = stderr_tail.lower()
+    if any(marker in lowered for marker in _AUTH_MARKERS) or _http_status_present(stderr_tail, 401):
+        return "authentication"
+    if _http_status_present(stderr_tail, 429) or any(marker in lowered for marker in _RATE_LIMIT_MARKERS):
+        return "rate_limited"
+    if returncode == 124 or "TIMEOUT after" in stderr_tail:
+        return "timeout"
+    return "runtime"
 
 
 def _decision(stdout: str) -> str | None:
@@ -171,7 +209,80 @@ def build_plan(cfg: dict, top_n: int) -> dict:
             "history_injection_enabled": True}
 
 
-def run_tradingagents(cfg: dict, top_n: int) -> tuple[Path, dict]:
+def _existing_analyses(db_path: Path, trade_date: str) -> dict[str, dict]:
+    """决策日当天已产出的 TradingAgents 结论（ticker → 记录），供断点续跑复用。
+
+    为什么需要
+    ----------
+    2026-10-09 实测：cycle 跑到第 15 步（内置 run_tradingagents）处理第 6 只时
+    进程被杀，前 5 只各自的 ``complete_report.md`` 都已落盘，但因旧实现把结果
+    攒在内存里等循环结束才入库，这 5 只**既没进 DB 也没进批次 JSON**。重跑时
+    只能整批重来，10 只 × 单只 6-7 分钟的 LLM 调用等于白烧一遍。
+
+    为什么匹配键是「决策日 + 标的」而不是 screen_report
+    ------------------------------------------------
+    ``screen_etfs`` 每次执行都写一个带时间戳的**新文件名**（即使当日同 rule_hash
+    的冻结 payload 被复用）。若把 screen_report 算进匹配键，重跑 cycle 后
+    续跑永远命中不了，等于没做续跑。同一交易日、同一标的的多智能体结论没必要
+    重算第二遍。
+
+    判据取「DB 里 status=ok 且 decision_text 非空」**且**「报告目录下
+    complete_report.md 仍在」——只看 DB 会在报告目录被清理/迁移后误判为已完成
+    而跳过；只看报告目录则会把上一批次的同名目录算进来。两者都满足才复用。
+    """
+    try:
+        with connect(db_path) as connection:
+            rows = connection.execute(
+                # ORDER BY created_at_utc：同一标的同决策日可能有多条（早期重跑遗留的
+                # 重复行），升序扫描让字典逐条覆盖，最终保留**最新**一条的 analysis_id。
+                "SELECT ticker, symbol, decision_text, report_dir, analysis_id FROM agent_analyses "
+                "WHERE analysis_date=? AND agent_system='TradingAgents' AND status='ok' "
+                "AND decision_text IS NOT NULL AND TRIM(decision_text) <> '' "
+                "ORDER BY created_at_utc",
+                (trade_date,),
+            ).fetchall()
+    except Exception:
+        # 断点信息取不到不应该让整轮分析失败：退化为「全部重跑」。
+        return {}
+    done: dict[str, dict] = {}
+    for ticker, symbol, decision, report_dir, analysis_id in rows:
+        if report_dir and (Path(report_dir) / "complete_report.md").exists():
+            done[ticker] = {"analysis_id": analysis_id, "ticker": ticker, "symbol": symbol,
+                            "decision": decision, "report_dir": report_dir}
+    return done
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """先写临时文件再改名覆盖，避免被中断时留下半截 JSON。
+
+    增量落盘必须原子：外部监视/恢复逻辑会读这个文件判断「跑到哪了」，
+    读到写坏的一半 JSON 比读到旧版本更危险。
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _run_one(command: list[str], project: Path, timeout_seconds: int) -> tuple[int, str, str]:
+    """跑一只候选并返回 (returncode, stdout, stderr)，超时按 rc=124 处理而非冒泡。
+
+    旧实现让 ``subprocess.TimeoutExpired`` 直接冒泡到 ``run_tradingagents`` 外层，
+    单只超时（默认 1800s）就会终止**整批**，后面还没跑的候选连一条
+    ``skipped`` 记录都留不下。改成捕获后记为 failed，循环继续。
+    """
+    try:
+        completed = subprocess.run(
+            command, cwd=project, text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=timeout_seconds, env=os.environ.copy(),
+        )
+        return completed.returncode, completed.stdout or "", completed.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
+        return 124, stdout, f"TIMEOUT after {timeout_seconds}s\n{stderr}"
+
+
+def run_tradingagents(cfg: dict, top_n: int, resume: bool = True) -> tuple[Path, dict]:
     plan = build_plan(cfg, top_n)
     if not plan["project_available"]:
         raise FileNotFoundError(plan["project_dir"])
@@ -180,38 +291,97 @@ def run_tradingagents(cfg: dict, top_n: int) -> tuple[Path, dict]:
     if not interpreter.exists():
         raise FileNotFoundError(f"TradingAgents interpreter not found: {interpreter}")
     report_root = resolve_project_path(cfg, cfg["tradingagents"]["reports_dir"])
-    items = []
-    stop_reason = None
-    for candidate in plan["candidates"]:
-        target = report_root / f"{candidate['ticker']}_{plan['trade_date']}"
-        if stop_reason:
-            items.append({**candidate, "status": "skipped_after_batch_failure", "returncode": None, "decision": None, "report_dir": str(target.resolve()), "error_class": stop_reason})
-            continue
-        command = [str(interpreter), "main.py", candidate["ticker"], "--date", plan["trade_date"], "--reports-dir", str(report_root), "--quiet"]
-        target.mkdir(parents=True, exist_ok=True)
-        evidence_path = target / "screen_evidence.json"
-        evidence = {"schema_version": 1, "trade_date": plan["trade_date"],
-                    "screen_report": plan["screen_report"], "source_snapshot": plan.get("source_snapshot"),
-                    "decision_at_utc": plan.get("decision_at_utc"), "rule_hash": plan.get("rule_hash"), **candidate}
-        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-        command.extend(["--screen-evidence", str(evidence_path.resolve())])
-        completed = subprocess.run(command, cwd=project, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=int(cfg["tradingagents"]["timeout_seconds"]), env=os.environ.copy())
-        stderr_tail = _safe_tail(completed.stderr)
-        error_class = "authentication" if "Authentication" in stderr_tail or "401" in stderr_tail else "runtime" if completed.returncode else None
-        item = {**candidate, "status": "ok" if completed.returncode == 0 else "failed", "returncode": completed.returncode, "decision": _decision(completed.stdout), "report_dir": str(target.resolve()), "error_class": error_class, "stdout_tail": _safe_tail(completed.stdout), "stderr_tail": stderr_tail}
-        items.append(item)
-        item["evidence_handoff_status"] = "passed_to_cli"
-        item["evidence_path"] = str(evidence_path.resolve())
-        if error_class == "authentication":
-            stop_reason = error_class
-    payload = {**plan, "run_type": "tradingagents_after_etf_screen", "created_at_utc": datetime.now(timezone.utc).isoformat(), "items": items}
-    output = resolve_project_path(cfg, cfg["runs_dir"]) / f"tradingagents_batch_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
     db_path = resolve_project_path(cfg, cfg["state_db"])
+
+    # 断点续跑：本决策日已成功的标的直接复用结论。这同时消除了 cycle 第 15 步
+    # 内置 run_tradingagents 与随后独立 run-agents 对**同一批 top_n** 的重复 LLM
+    # 调用（旧行为下这会把整条链的 LLM 耗时翻倍，是"老中断"的放大器）。
+    already_done = _existing_analyses(db_path, plan["trade_date"]) if resume else {}
+
+    output = resolve_project_path(cfg, cfg["runs_dir"]) / f"tradingagents_batch_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
+    items: list[dict] = []
+    payload = {**plan, "run_type": "tradingagents_after_etf_screen",
+               "created_at_utc": datetime.now(timezone.utc).isoformat(),
+               "resume_enabled": bool(resume), "resumed_reused": sorted(already_done),
+               "items": items}
+
+    def flush() -> None:
+        # 增量落盘：每完成一只就刷新一次，使进程被中断时已完成结果不丢。
+        # 旧实现只在候选循环全部结束后一次性写盘，中断 ⇒ 整批结果全部丢弃。
+        _atomic_write_json(output, payload)
+
+    flush()  # 先把骨架落盘，外部监视可据此判断"已启动、正在跑第几只"
+
+    timeout_seconds = int(cfg["tradingagents"]["timeout_seconds"])
+    # 限流退避：429 属可自愈的瞬时故障，先指数退避重试；重试仍失败才熔断整批。
+    rate_limit_max_attempts = max(1, int(cfg["tradingagents"].get("rate_limit_max_attempts", 3)))
+    rate_limit_backoff_seconds = max(0.0, float(cfg["tradingagents"].get("rate_limit_backoff_seconds", 30.0)))
+    stop_reason = None
     with connect(db_path) as connection:
-        for item in items:
-            item["decision_semantics"] = decision_semantics(item.get("decision") if item["status"] == "ok" else None)
-            item["analysis_id"] = record_agent_analysis(connection, plan["screen_report"], item, plan["trade_date"])
-    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        for candidate_index, candidate in enumerate(plan["candidates"]):
+            target = report_root / f"{candidate['ticker']}_{plan['trade_date']}"
+
+            def persist(item: dict) -> None:
+                item["decision_semantics"] = decision_semantics(item.get("decision") if item["status"] == "ok" else None)
+                item["analysis_id"] = record_agent_analysis(connection, plan["screen_report"], item, plan["trade_date"])
+                items.append(item)
+                flush()
+
+            if stop_reason:
+                persist({**candidate, "status": "skipped_after_batch_failure", "returncode": None,
+                         "decision": None, "report_dir": str(target.resolve()), "error_class": stop_reason})
+                continue
+            prior = already_done.get(candidate["ticker"])
+            if prior:
+                # 复用本决策日已有结论：不重复调用 LLM，也**不再重复入库**。
+                # 旧实现会以本批次（新）screen_report 为键再插一行——因唯一约束是
+                # (screen_report,ticker,analysis_date,agent_system)，新 screen 不与之冲突，
+                # 于是同标的同决策日累积出多行重复：agent_outcomes 被重复结算、
+                # 报告 TA 章节同一标的出现两次（2026-10-10 重跑 cycle 实测 12→22 行）。
+                # 结论本身已在库，直接沿用其 analysis_id 即可。
+                item = {**candidate, "status": "ok", "returncode": 0, "decision": prior["decision"],
+                        "report_dir": prior["report_dir"], "error_class": None, "reused": True,
+                        "analysis_id": prior.get("analysis_id"),
+                        "decision_semantics": decision_semantics(prior["decision"]),
+                        "note": "resume: 复用本决策日已有产出，未重复调用 LLM"}
+                items.append(item)
+                flush()
+                continue
+
+            command = [str(interpreter), "main.py", candidate["ticker"], "--date", plan["trade_date"], "--reports-dir", str(report_root), "--quiet"]
+            target.mkdir(parents=True, exist_ok=True)
+            evidence_path = target / "screen_evidence.json"
+            evidence = {"schema_version": 1, "trade_date": plan["trade_date"],
+                        "screen_report": plan["screen_report"], "source_snapshot": plan.get("source_snapshot"),
+                        "decision_at_utc": plan.get("decision_at_utc"), "rule_hash": plan.get("rule_hash"), **candidate}
+            evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+            command.extend(["--screen-evidence", str(evidence_path.resolve())])
+            attempt = 1
+            while True:
+                returncode, stdout, stderr = _run_one(command, project, timeout_seconds)
+                stderr_tail = _safe_tail(stderr)
+                error_class = _classify_failure(returncode, stderr_tail)
+                if error_class != "rate_limited" or attempt >= rate_limit_max_attempts:
+                    break
+                delay = rate_limit_backoff_seconds * (2 ** (attempt - 1))
+                print(f"[run-agents] {candidate['ticker']} rate limited "
+                      f"(attempt {attempt}/{rate_limit_max_attempts}); retrying in {delay:.0f}s",
+                      file=sys.stderr, flush=True)
+                time.sleep(delay)
+                attempt += 1
+            item = {**candidate, "status": "ok" if returncode == 0 else "failed", "returncode": returncode,
+                    "decision": _decision(stdout), "report_dir": str(target.resolve()), "error_class": error_class,
+                    "attempts": attempt,
+                    "stdout_tail": _safe_tail(stdout), "stderr_tail": stderr_tail,
+                    "evidence_handoff_status": "passed_to_cli", "evidence_path": str(evidence_path.resolve())}
+            persist(item)  # ← 单只结束立即入库 + 落盘
+            if error_class in _BATCH_FATAL_CLASSES:
+                stop_reason = error_class
+                remaining = len(plan["candidates"]) - candidate_index - 1
+                print(f"[run-agents] {candidate['ticker']}: {error_class} after {attempt} attempt(s); "
+                      f"skipping the remaining {remaining} candidate(s) in this batch",
+                      file=sys.stderr, flush=True)
+    flush()
     return output, payload
 
 

@@ -283,6 +283,11 @@ def test_cycle_failure_does_not_read_old_screen_and_still_reports(cfg, monkeypat
 def test_cached_cycle_returns_waiting_and_does_not_mutate_config(cfg, monkeypatch):
     write_histories(cfg)
     snapshot(cfg)
+    # 显式钉住本用例假设的前置条件：本轮不跑 LLM。生产配置 2026-10 已把
+    # skip_tradingagents 由 True 翻成 False，若跟着配置走，这里会真的去调 LLM，
+    # 结果变成 tradingagents 步骤 failed → partial_failure，与本用例要验证的
+    # 「无 LLM 但流程仍算跑通」语义不再对应。
+    cfg["workflow"]["skip_tradingagents"] = True
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
     result = run_cycle(cfg, 2, True)
     # 本轮没有任何 LLM 分析被结算 → outcome 必须带 _without_llm 后缀并给出告警，
@@ -309,19 +314,54 @@ def test_switching_off_skip_flag_restores_plain_complete(cfg, monkeypatch):
     result = run_cycle(cfg, 2, True)
     # 开关关闭 + 有结算 → 不加后缀、不发告警。
     assert result["outcome"] == "complete_with_data_waits", result.get("archive")
-    assert result["llm_coverage"] == {"analyses_settled": 3, "skip_flag": False, "skip_reason": None, "usable": True}
+    assert result["llm_coverage"] == {"analyses_settled": 3, "analyses_produced": 0,
+                                      "analyses_reused": 0, "skip_flag": False,
+                                      "skip_reason": None, "usable": True}
+    assert result["warnings"] == []
+
+
+def test_llm_produced_without_settlement_is_usable(cfg, monkeypatch):
+    """已修语义回归（2026-10-09）：本轮真跑出 LLM 结论但尚无收益可结算时，
+    usable 必须为 True、outcome 不得带 _without_llm。
+
+    旧判据 `analyses_settled > 0` 会让每一个正常交易日都判成缺 LLM —— 因为当日新产出
+    的分析要等 5/20 个交易日走完才有收益可结算，当天必然 settled=0。
+    """
+    write_histories(cfg)
+    snapshot(cfg)
+    cfg["workflow"]["skip_tradingagents"] = False
+    monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
+    monkeypatch.setattr("prediction_research.cycle.run_tradingagents",
+                        lambda *_: (Path("batch.json"), {"items": [{"status": "ok", "reused": False},
+                                                                   {"status": "ok", "reused": True},
+                                                                   {"status": "failed"}]}))
+    # 当日产出还没到结算期：settled=0。
+    monkeypatch.setattr("prediction_research.cycle.settle_agent_analyses",
+                        lambda _: {"successful_analyses": 0, "settled": 0, "scored": 0, "items": []})
+    result = run_cycle(cfg, 2, True)
+    assert result["outcome"] == "complete_with_data_waits", result.get("archive")
+    assert result["llm_coverage"]["usable"] is True
+    assert result["llm_coverage"]["analyses_produced"] == 2
+    assert result["llm_coverage"]["analyses_reused"] == 1
+    assert result["llm_coverage"]["analyses_settled"] == 0
     assert result["warnings"] == []
 
 
 def test_skip_flag_warns_even_when_stale_analyses_settle(cfg, monkeypatch):
     write_histories(cfg)
     snapshot(cfg)
+    # 同 test_cached_cycle：本用例验证的是「开关显式跳过 LLM」这条路径，必须钉住
+    # 前置条件。生产配置 2026-10 已把 skip_tradingagents 由 True 翻成 False，若跟着
+    # 配置走，这里会真去调 LLM 并失败 → skip_reason 变成 tradingagents_step_failed，
+    # 与本用例要断言的 skip_tradingagents 语义不再对应。
+    cfg["workflow"]["skip_tradingagents"] = True
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
     # settle 会补结历史遗留的分析，但本轮 LLM 一步没跑 → 仍然必须告警。
     monkeypatch.setattr("prediction_research.cycle.settle_agent_analyses",
                         lambda _: {"successful_analyses": 3, "settled": 3, "scored": 3, "items": []})
     result = run_cycle(cfg, 2, True)
-    assert result["llm_coverage"] == {"analyses_settled": 3, "skip_flag": True,
+    assert result["llm_coverage"] == {"analyses_settled": 3, "analyses_produced": 0,
+                                      "analyses_reused": 0, "skip_flag": True,
                                       "skip_reason": "skip_tradingagents", "usable": False}
     assert result["outcome"] == "complete_with_data_waits_without_llm"
     assert [row["code"] for row in result["warnings"]] == ["llm_step_not_run"]

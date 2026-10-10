@@ -4,14 +4,25 @@ import argparse
 import json
 import logging
 import os
+import sys
 import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
+# 🔧 WMI 守卫（必须在 import pandas/yfinance 之前）：WMI 服务退化时，
+# pandas 在导入期调用的 platform.machine() 会挂死数分钟。详见 wmi_guard.py。
+_PROJECT_DIR = Path(__file__).resolve().parent
+if str(_PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_DIR))
+try:
+    import wmi_guard  # noqa: F401
+except Exception:  # pragma: no cover - 缺失时不阻断
+    pass
+
 from daily_artifacts import new_run_id, save_daily_result
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = _PROJECT_DIR
 DEFAULT_HOLDINGS = ("510050.SS", "515220.SS")
 MANDATORY_DAILY_TICKERS = ("SPY", "QQQ", "GLD")
 MAX_RETRIES = 5

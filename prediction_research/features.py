@@ -31,6 +31,35 @@ EXTERNAL_FEATURE_NAMES = (
     "underlying_coverage",
 )
 
+# ⛔ 禁止把任何**成交额 / turnover（amount）类**量加进 FEATURE_NAMES / EXTERNAL_FEATURE_NAMES。
+#
+# 记忆 §5「停用成交额类特征必须动手」的落地。核查结论（2026-10-10）：
+#   - 本模块的特征里**从来没有**成交额类量（`git log -S"amount" -- features.py` 为空），
+#     真正的成交量维度只有 `volume_ratio_20`，取自 `bar.volume`。
+#   - 日线缓存的 `amount` 列在本管道里**恒为常量占位**：新浪 K 线不返回成交额
+#     （`adapters/sina.py` 写死 "0" 并标注 `amount_status=unavailable`），腾讯源同样
+#     `df["amount"] = 0`（`etf_data_source.py`）。常量列对模型是纯噪声，还会把
+#     「残缺输入」伪装成有效特征——这正是记忆要求停用它的原因。
+#   - 真实成交额只存在于**资金流快照**（东财 `f6` / 新浪 `amount`），且只供粗筛
+#     `liquidity` 因子使用，**不进模型特征**（`screening.py`）。
+#
+# 下面这个导入期守卫把该不变量钉死：将来谁误把成交额类量加回特征列表，import 即失败。
+_AMOUNT_FEATURE_GUARD = ("amount", "turnover", "成交额", "成交金额")
+
+
+def _assert_no_amount_features(*groups: tuple[str, ...]) -> None:
+    for group in groups:
+        for name in group:
+            if any(token in name.lower() for token in _AMOUNT_FEATURE_GUARD):
+                raise AssertionError(
+                    f"feature '{name}' looks like an amount/turnover feature. The daily cache's "
+                    "`amount` column is a constant placeholder (sina/tencent return no turnover), "
+                    "so it is a corrupt input — see the note above EXTERNAL_FEATURE_NAMES."
+                )
+
+
+_assert_no_amount_features(FEATURE_NAMES, EXTERNAL_FEATURE_NAMES)
+
 
 @dataclass(frozen=True)
 class Sample:

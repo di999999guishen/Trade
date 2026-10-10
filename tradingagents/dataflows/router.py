@@ -50,6 +50,7 @@ from tradingagents.dataflows.eastmoney_data import (
     get_fundamentals_eastmoney,
     get_global_news_eastmoney,
     get_income_statement_eastmoney,
+    get_insider_transactions_eastmoney,
     get_macro_data_akshare,
     get_news_eastmoney,
 )
@@ -158,6 +159,11 @@ VENDOR_METHODS = {
         "alpha_vantage": get_alpha_vantage_global_news,
     },
     "get_insider_transactions": {
+        # eastmoney 必须排最前：本项目 data_vendors 全线走国内源，
+        # 若不提供该实现，router 会因「Configured vendor(s) ['eastmoney'] not available」
+        # 直接抛错终止整轮分析（2026-10-08 实测 10/10 候选 rc=1 失败）。
+        # 该实现如实返回 DATA_UNAVAILABLE 哨兵，不编造数值。
+        "eastmoney": get_insider_transactions_eastmoney,
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
     },
