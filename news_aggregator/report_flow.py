@@ -22,7 +22,7 @@ OUTPUT_DIR = os.path.join(_BASE, "..", "reports")
 try:
     from flow_config import NEWS_WINDOW_DAYS as _NWD  # noqa: E402
 except Exception:
-    _NWD = 7
+    _NWD = 14
 NEWS_WINDOW_DAYS_LABEL = str(_NWD)
 
 
@@ -139,9 +139,10 @@ def _h_etfs(etfs: list) -> str:
             sector_html = f'<div class="sub-h">板块/行业消息面（{e.get('sector_bias')}）</div>' + sector_html
         blocks.append(f"""<div class="etf-block">
           <h3>{e['name']} ({e['ticker']}) · 跟踪{e.get('index_name','')} · 个股加权分 <b>{e.get('weighted_score')}</b>（{e.get('bias')}，置信度 {e.get('confidence','-')}）· 板块分 {e.get('sector_score')}（{e.get('sector_bias','-')}）</h3>
-          <div class="cons">权重前8：{cons} · 个股相关新闻 {e.get('news_count',0)} 条（覆盖 {e.get('covered_constituents',0)} 只）· 板块新闻 {e.get('sector_news_count',0)} 条 · 丢弃 旧闻{e.get('dropped_stale',0)}/无关{e.get('dropped_irrelevant',0)}</div>
+          <div class="cons">权重前8：{cons} · 个股相关新闻 {e.get('news_count',0)} 条（覆盖 {e.get('covered_constituents',0)} 只）· 板块新闻 {e.get('sector_news_count',0)} 条 · 剔除 旧闻{e.get('dropped_stale',0)}/无关{e.get('dropped_irrelevant',0)}/行情复盘{e.get('dropped_market_action',0)} · 同事件合并 {e.get('dup_merged',0)} 条</div>
           {news_html}{sector_html}</div>""")
-    return f'<div class="section-title">🏭 ETF 成分股权重新闻（每日加权）</div>' + "\n".join(blocks)
+    return (f'<div class="section-title">🏭 ETF 成分股权重新闻（每日加权 · '
+            f'仅统计近 {NEWS_WINDOW_DAYS_LABEL} 天）</div>' + "\n".join(blocks))
 
 
 def _h_inst(insts: list) -> str:
@@ -331,7 +332,9 @@ def load_latest_context(max_chars: int = 4000) -> str:
         for prio, n in ranked[:5]:
             tag = "🔥大事件" if n.get("is_major") else ("⚠️利空" if n.get("sentiment") == "bad" else "")
             title = n.get("title", "")[:55]
-            lines.append(f"    · [{n.get('constituent_weight')}%] "
+            # 带上发布日期：窗口为 14 天，若不标日期，模型会把十几天前的消息当当天消息用
+            d = str(n.get("time", ""))[:10]
+            lines.append(f"    · [{n.get('constituent_weight')}%] {d} "
                          f"{n.get('constituent_name')}: {title} {tag}")
             # 东财列表页的 title 常是多条标题拼接（如「实控人遭留置，富祥股份大跌…」），
             # 主语会错位。大事件额外带一句正文，避免分析师误读成别的公司出事。

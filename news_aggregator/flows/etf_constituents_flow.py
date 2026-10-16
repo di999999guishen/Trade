@@ -26,7 +26,10 @@ if _BASE not in sys.path:
 from flow_config import (                                  # noqa: E402
     TRACKED_ETFS, BAD_NEWS_WEIGHT, NEWS_WINDOW_DAYS, SECTOR_KEYWORD_OVERRIDES,
 )
-from fetcher import fetch_stock_news, is_major_event, is_title_relevant  # noqa: E402
+from fetcher import (                                    # noqa: E402
+    fetch_stock_news, is_major_event, is_title_relevant,
+    is_market_action_title, is_same_event, merge_sentiment,
+)
 from sentiment import classify_sentiment               # noqa: E402
 
 
@@ -125,13 +128,13 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
     cutoff = now.timestamp() - NEWS_WINDOW_DAYS * 86400
     sector_kws = _sector_keywords(etf)
 
-    direct_news: list[dict] = []          # 个股直接新闻（可归因到具体成分股）
+    direct_news: list[dict] = []          # 个股直接新闻（可归因到具体成分股），去重后生成
     sector_map: dict[str, dict] = {}      # 板块新闻（按标题去重，不归因到单只股票）
-    seen: set[tuple[str, str]] = set()
+    kept_by_stock: dict[str, list[dict]] = {}   # 每只成分股已保留的新闻（供同事件去重比对）
     dropped_stale = 0
     dropped_irrelevant = 0
-    # 每个成分股的情绪分列表，最后按指数权重加权平均
-    per_stock_scores: dict[str, list[float]] = {}
+    dropped_market = 0
+    dup_merged = 0
 
     for c in top:
         cnews = fetch_stock_news(c["code"], c["name"], market)
@@ -144,32 +147,59 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
                 continue
 
             title = (n.get("title") or "").strip()
-            # 2) 去重：同一股票的同一标题只算一次
-            key = (c["code"], title)
-            if key in seen:
+            if not title:
                 continue
-            seen.add(key)
+
+            # 2) 行情/资金复盘类稿件：标题带了成分股名，但讲的是概念板块或当日涨跌，
+            #    不是这家公司的经营消息，且会把「今天涨」诱导成「明天涨」→ 剔除并单独计数。
+            if is_market_action_title(title):
+                dropped_market += 1
+                continue
 
             # 3) 分层相关性判定
             if is_title_relevant(title, c["code"], c["name"]):
                 # ① 直接相关：标题真的讲了这只成分股 → 可归因、按权重计分
                 sent = classify_sentiment(title)
-                s = 1 if sent == "good" else (-BAD_NEWS_WEIGHT if sent == "bad" else 0)
+                bucket = kept_by_stock.setdefault(c["code"], [])
+                dup = next((x for x in bucket if is_same_event(x["title"], title)), None)
+                if dup is not None:
+                    # 同事件改写稿：不新增条目，只升级情绪（bad>good>neutral），
+                    # 信息更全的标题（更长）覆盖短标题。
+                    dup_merged += 1
+                    dup["sentiment"] = merge_sentiment(dup.get("sentiment"), sent)
+                    if len(title) > len(dup["title"]):
+                        dup["title"] = title
+                        dup["url"] = n.get("url", "")
+                        dup["time"] = n.get("time", "")
+                    continue
                 n["scope"] = "个股"
                 n["constituent_code"] = c["code"]
                 n["constituent_name"] = c["name"]
                 n["constituent_weight"] = w
                 n["sentiment"] = sent
-                n["is_major"] = is_major_event(title)
-                n["weighted_sentiment"] = round(w * s, 4)
-                per_stock_scores.setdefault(c["code"], []).append(s)
-                direct_news.append(n)
+                bucket.append(n)
             elif _is_sector_news(title, sector_kws):
                 # ② 板块相关：只作 ETF 级参考，**不**归因到某只成分股（避免张冠李戴）
+                n["constituent_code"] = None      # 板块稿可能先被 A 股的抓取命中，
+                n["constituent_name"] = None      # 会把 A 股的名字留在字段里造成误读
+                n["constituent_weight"] = None
                 sector_map.setdefault(title, n)
             else:
                 # ③ 大盘综述 / 同板块别家公司稿件 → 丢弃
                 dropped_irrelevant += 1
+
+    # ── 去重完毕后统一打分 ──
+    # 必须在去重之后算：合并同事件会升级情绪，若在合并前计分，分数会停留在旧情绪上。
+    per_stock_scores: dict[str, list[float]] = {}
+    for c in top:
+        w = c.get("weight") or 0.0
+        for n in kept_by_stock.get(c["code"], []):
+            sent = n.get("sentiment", "neutral")
+            s = 1 if sent == "good" else (-BAD_NEWS_WEIGHT if sent == "bad" else 0)
+            n["is_major"] = is_major_event(n.get("title", ""))
+            n["weighted_sentiment"] = round(w * s, 4)
+            per_stock_scores.setdefault(c["code"], []).append(s)
+            direct_news.append(n)
 
     # 个股直接新闻：按权重×情绪排序，权重高的坏消息排前
     direct_news.sort(key=lambda n: n.get("weighted_sentiment", 0))
@@ -253,6 +283,8 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
         "sector_news_count": len(sector_news),
         "dropped_stale": dropped_stale,
         "dropped_irrelevant": dropped_irrelevant,
+        "dropped_market_action": dropped_market,
+        "dup_merged": dup_merged,
         "covered_constituents": covered,
         "weighted_score": weighted_score,
         "confidence": confidence,
@@ -275,8 +307,9 @@ def fetch_etf_constituent_flow() -> dict[str, Any]:
         if r["ok"]:
             print(f"    成分股 {r['constituent_count']} 只｜"
                   f"个股相关新闻 {r['news_count']} 条（覆盖 {r['covered_constituents']} 只）"
-                  f"｜板块新闻 {r['sector_news_count']} 条"
-                  f"｜丢弃 旧闻{r['dropped_stale']}/无关{r['dropped_irrelevant']}")
+                  f"｜板块新闻 {r['sector_news_count']} 条")
+            print(f"    剔除 旧闻{r['dropped_stale']}/无关{r['dropped_irrelevant']}"
+                  f"/行情复盘{r['dropped_market_action']}｜同事件合并 {r['dup_merged']} 条")
             print(f"    个股加权分 {r['weighted_score']}（{r['bias']}，置信度{r['confidence']}）"
                   f"｜板块分 {r['sector_score']}（{r['sector_bias']}）")
         else:
