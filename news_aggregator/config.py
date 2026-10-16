@@ -44,9 +44,9 @@ MAJOR_EVENT_KEYWORDS = [
     # 并购/重组
     "收购", "并购", "重组", "合并", "入股", "参股",
     "acquisition", "merger", "buyout", "takeover",
-    # 重大合同/合作
+    # 重大合同/合作（「deal」太宽，英文标题里几乎必中，去掉）
     "重大合同", "战略合作", "签约", "中标",
-    "partnership", "contract", "deal",
+    "partnership", "contract",
     # 监管/处罚
     "立案", "调查", "处罚", "罚款", "监管", "警示",
     "investigation", "fine", "regulatory", "SEC", "lawsuit",
@@ -54,18 +54,29 @@ MAJOR_EVENT_KEYWORDS = [
     "涨停", "跌停", "停牌", "复牌", "退市",
     "surge", "plunge", "halted", "delisted",
     # 产品/技术重大突破
-    "发布", "上市", "获批", "获准", "突破", "里程碑",
+    # 注意：不能用裸「突破」——「突破年线/半年线」是技术盘点，不是公司事件；
+    #      不能用裸「上市」——「上市银行/上市公司」满屏误报。
+    "技术突破", "新品发布", "获批", "获准", "里程碑", "过会", "注册生效", "IPO",
     "launch", "approval", "breakthrough", "FDA",
     # 管理层变动
     "辞职", "变更", "任免", "董事长", "CEO",
     "resign", "appoint", "executive",
+    # 治理/反腐/高管被查（茅台财务总监被留置这类事件必须命中，
+    # 否则权重第一的成分股出了治理黑天鹅也不会被标成大事件）
+    "留置", "监察", "纪委", "违纪", "双开", "被查", "失联", "约谈",
+    "控制权", "易主", "股权转让", "内控", "违规", "造假",
+    "财务总监", "董秘", "总经理", "实控人", "大股东",
+    "detained", "detention", "supervision", "corruption",
+    # 诉讼/仲裁/索赔
+    "诉讼", "仲裁", "索赔", "起诉", "被判", "赔偿",
+    "litigation", "arbitration", "settlement",
     # 回购/增减持
     "回购", "增持", "减持", "buyback", "repurchase",
     # 宏观/利率/美债（大宗商品与美债预测相关）
     "美债", "国债收益率", "利率", "美联储", "加息", "降息", "非农", "CPI", "PPI",
-    "treasury", "yield", "Fed", "rate cut", "rate hike", "FOMC", "inflation",
-    # 其他重大
-    "重大", "重要", "公告", "声明",
+    "treasury", "yield", "rate cut", "rate hike", "FOMC", "inflation",
+    # 其他重大（刻意收紧：裸「重大/重要/公告/声明」几乎匹配所有新闻，会让标签失效）
+    "重大资产", "重大事项", "重大合同", "重要公告",
 ]
 
 # 输出目录

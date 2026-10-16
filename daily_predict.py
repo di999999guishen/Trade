@@ -1,4 +1,8 @@
-"""每日预测：配置的持仓 + 固定 SPY/QQQ/黄金(GLD)，附 Polymarket 证据。"""
+"""每日预测：配置的持仓 + 固定黄金(GLD)代理，附 Polymarket 证据。
+
+注：2026-10-15 起移除 SPY/QQQ（仅关注境内标的时属白烧 DeepSeek 额度的三份之一），
+仅保留 GLD 作为黄金 ETF 代理。如需恢复美股宽基跟踪，改 MANDATORY_DAILY_TICKERS 即可。
+"""
 
 import argparse
 import json
@@ -24,14 +28,14 @@ from daily_artifacts import new_run_id, save_daily_result
 
 PROJECT_DIR = _PROJECT_DIR
 DEFAULT_HOLDINGS = ("510050.SS", "515220.SS")
-MANDATORY_DAILY_TICKERS = ("SPY", "QQQ", "GLD")
+MANDATORY_DAILY_TICKERS = ("GLD",)  # 2026-10-15 移除 SPY/QQQ：仅境内标的时不跟踪美股宽基
 MAX_RETRIES = 5
 INITIAL_DELAY = 10
 logger = logging.getLogger(__name__)
 
 
 def build_daily_tickers(configured: str | None = None) -> list[str]:
-    """DAILY_TICKER changes holdings, never removes the three daily instruments."""
+    """DAILY_TICKER changes holdings, never removes the mandatory daily instrument (GLD)."""
     holdings = DEFAULT_HOLDINGS if configured is None else configured.split(",")
     return list(dict.fromkeys(
         ticker.strip().upper()
@@ -53,7 +57,7 @@ def build_config() -> dict:
         "max_risk_discuss_rounds": 1,
     })
     # The akshare adapter already serves US OHLCV/indicators through Sina.
-    # Yahoo answers 429 for SPY/QQQ/GLD, which the snapshot path would report as
+    # Yahoo answers 429 for GLD, which the snapshot path would report as
     # "no rows"; the domestic source is opted in through data_vendors below.
     #
     # us_ohlcv_vendor used to be the switch that picked that route. Nothing
@@ -74,8 +78,13 @@ def build_config() -> dict:
     return config
 
 
-def build_ticker_config(base_config: dict, ticker: str, snapshot: dict | None) -> dict:
-    """Isolate per-instrument evidence and US ETF sources from holdings config."""
+def build_ticker_config(base_config: dict, ticker: str, snapshot: dict | None,
+                        news_flow_context: str | None = None) -> dict:
+    """Isolate per-instrument evidence and US ETF sources from holdings config.
+
+    news_flow_context: 由 news_aggregator 生成的「宏观/ETF成分股/机构13F」摘要，
+    作为额外证据注入，与 Polymarket 快照同路（screen_evidence_context）。
+    """
     config = deepcopy(base_config)
     # The shared vendor registry merges dictionaries. Explicitly reset news
     # routing for holdings that follow a US ETF in a custom DAILY_TICKER order.
@@ -94,6 +103,11 @@ def build_ticker_config(base_config: dict, ticker: str, snapshot: dict | None) -
         config["screen_evidence_context"] = (
             config.get("screen_evidence_context", "")
             + "\n\n" + render_daily_prediction_market_context(snapshot)
+        )
+    if news_flow_context:
+        config["screen_evidence_context"] = (
+            config.get("screen_evidence_context", "")
+            + "\n\n" + news_flow_context
         )
     return config
 
@@ -125,7 +139,8 @@ def run_prediction_with_retry(ticker: str, analysis_date: str, config: dict,
 
 
 def run_daily_predictions(tickers, analysis_date, run_time, base_config, results_dir,
-                          *, graph_factory=None, snapshot_loader=None) -> list[str]:
+                          *, graph_factory=None, snapshot_loader=None,
+                          news_flow_context: str | None = None) -> list[str]:
     """Run every holding and mandatory instrument, even after an earlier failure."""
     from tradingagents.dataflows.daily_prediction_markets import (
         get_daily_prediction_market_snapshot,
@@ -165,7 +180,7 @@ def run_daily_predictions(tickers, analysis_date, run_time, base_config, results
                     json.dump(snapshot, handle, ensure_ascii=False, indent=2, allow_nan=False)
                 print(f"  Polymarket: {snapshot['status']}，{len(snapshot['markets'])} 个相关市场")
 
-            config = build_ticker_config(base_config, ticker, snapshot)
+            config = build_ticker_config(base_config, ticker, snapshot, news_flow_context)
             result, decision = run_prediction_with_retry(
                 ticker, analysis_date, config, graph_factory=graph_factory)
             if snapshot is not None:
@@ -211,10 +226,20 @@ def main(argv=None) -> int:
     now = datetime.now()
     analysis_date = now.strftime("%Y-%m-%d")
     config = build_config()
+    # 加载「独立新闻流」摘要（宏观/ETF成分股/机构13F），注入每只标的分析上下文
+    news_flow_context = ""
+    try:
+        from news_aggregator.report_flow import load_latest_context
+        news_flow_context = load_latest_context()
+        if news_flow_context:
+            print(f"  📡 已加载新闻流摘要（{len(news_flow_context)} 字）")
+    except Exception as exc:  # 新闻流缺失不阻断预测
+        logger.warning("新闻流摘要加载失败: %s", exc)
     print(f"\n运行时间: {now:%Y-%m-%d %H:%M}\n分析日期: {analysis_date}")
-    print(f"分析标的: {', '.join(tickers)}\n固定每日: SPY, QQQ, GLD（黄金ETF代理）")
+    print(f"分析标的: {', '.join(tickers)}\n固定每日: GLD（黄金ETF代理）")
     failed = run_daily_predictions(
-        tickers, analysis_date, now, config, PROJECT_DIR / "results" / "daily")
+        tickers, analysis_date, now, config, PROJECT_DIR / "results" / "daily",
+        news_flow_context=news_flow_context or None)
     if failed:
         print(f"\n⚠️ 完成，{len(failed)}/{len(tickers)} 只标的失败: {', '.join(failed)}")
         return 1
