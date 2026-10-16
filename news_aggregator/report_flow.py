@@ -42,8 +42,15 @@ def _h_alert(macro: dict, etfs: list, insts: list) -> str:
         alerts.append(f"🔥 宏观「{m['label']}」于 {m['last_release']} 发布（数据月 {m['last_data_month']}），"
                       f"最新值 {m['current']}（前值 {m['previous']}）")
     for e in etfs:
-        if e.get("ok") and e.get("weighted_score") is not None and e["weighted_score"] < 0:
-            alerts.append(f"⚠️ {e['name']} 加权消息面偏空（分 {e['weighted_score']}）")
+        # 置信度「低」时不发偏空告警：样本不足（如仅 1 只成分股 2 条新闻）得出的负分
+        # 不具代表性，报出来会误导决策。
+        if (e.get("ok") and e.get("weighted_score") is not None
+                and e.get("confidence", "高") != "低" and e["weighted_score"] < 0):
+            alerts.append(f"⚠️ {e['name']} 成分股消息面偏空（分 {e['weighted_score']}，"
+                          f"覆盖 {e.get('covered_constituents')} 只）")
+        if e.get("ok") and e.get("sector_score") is not None and e["sector_score"] < 0:
+            alerts.append(f"⚠️ {e['name']} 板块消息面偏空（分 {e['sector_score']}，"
+                          f"{e.get('sector_news_count', 0)} 条）")
         # 大事件 + 高权重成分股的坏消息，单独提为告警
         for n in _rank_etf_news(e)[:3]:
             if n.get("is_major") or n.get("sentiment") == "bad":
@@ -120,11 +127,20 @@ def _h_etfs(etfs: list) -> str:
               <b>{n.get('constituent_name')}</b>: {n.get('title','')[:60]}
               <span class="meta">{n.get('source','')} {n.get('time','')}</span></div>"""
         if not news_html:
-            news_html = '<div class="empty">成分股层面无新新闻</div>'
+            news_html = '<div class="empty">成分股层面无相关新闻</div>'
+        sector_html = ""
+        for n in (e.get("sector_news") or [])[:6]:
+            sent = n.get("sentiment", "")
+            sc = "good" if sent == "good" else ("bad" if sent == "bad" else "neutral")
+            sector_html += f"""<div class="news-line {sc}">
+              <span class="w">[板块]</span>{n.get('title','')[:60]}
+              <span class="meta">{n.get('source','')} {n.get('time','')}</span></div>"""
+        if sector_html:
+            sector_html = f'<div class="sub-h">板块/行业消息面（{e.get('sector_bias')}）</div>' + sector_html
         blocks.append(f"""<div class="etf-block">
-          <h3>{e['name']} ({e['ticker']}) · 跟踪{e.get('index_name','')} · 加权分 <b>{e.get('weighted_score')}</b>（{e.get('bias')}）</h3>
-          <div class="cons">权重前8：{cons} · 近{NEWS_WINDOW_DAYS_LABEL}日新闻 {e.get('news_count',0)} 条（过滤旧闻 {e.get('dropped_stale',0)} 条）</div>
-          {news_html}</div>""")
+          <h3>{e['name']} ({e['ticker']}) · 跟踪{e.get('index_name','')} · 个股加权分 <b>{e.get('weighted_score')}</b>（{e.get('bias')}，置信度 {e.get('confidence','-')}）· 板块分 {e.get('sector_score')}（{e.get('sector_bias','-')}）</h3>
+          <div class="cons">权重前8：{cons} · 个股相关新闻 {e.get('news_count',0)} 条（覆盖 {e.get('covered_constituents',0)} 只）· 板块新闻 {e.get('sector_news_count',0)} 条 · 丢弃 旧闻{e.get('dropped_stale',0)}/无关{e.get('dropped_irrelevant',0)}</div>
+          {news_html}{sector_html}</div>""")
     return f'<div class="section-title">🏭 ETF 成分股权重新闻（每日加权）</div>' + "\n".join(blocks)
 
 
@@ -185,6 +201,7 @@ body{{font-family:-apple-system,"Microsoft YaHei",sans-serif;background:#f5f7fa;
 .etf-block h3{{font-size:1.05em;margin-bottom:8px;}}
 .etf-block h4{{font-size:.95em;margin:8px 0 4px;color:#555;}}
 .cons{{font-size:.82em;color:#666;margin-bottom:8px;}}
+.sub-h{{font-size:.82em;color:#0f3460;font-weight:600;margin:8px 0 2px;}}
 .news-line{{padding:5px 0;border-bottom:1px dashed #eee;font-size:.88em;}}
 .news-line .w{{display:inline-block;background:#eef;color:#2471a3;padding:0 6px;border-radius:4px;font-size:.8em;margin-right:4px;}}
 .news-line.good{{border-left:3px solid #2ecc71;padding-left:6px;}}
@@ -282,7 +299,15 @@ def load_latest_context(max_chars: int = 4000) -> str:
         if not (e.get("ok") and e.get("weighted_score") is not None):
             continue
         lines.append(f"- {e['name']}({e['ticker']}) 成分股加权消息面：{e['bias']}"
-                     f"（分 {e['weighted_score']}，覆盖 {e.get('covered_constituents')} 只成分股）")
+                     f"（分 {e['weighted_score']}，覆盖 {e.get('covered_constituents')} 只成分股，"
+                     f"置信度 {e.get('confidence','-')}）")
+        if e.get("sector_score") is not None:
+            lines.append(f"    · 板块消息面：{e.get('sector_bias')}"
+                         f"（分 {e['sector_score']}，{e.get('sector_news_count',0)} 条）")
+        # 置信度低时，个股直接新闻太少，并列板块新闻标题，避免「看起来没消息」
+        if e.get("confidence") == "低":
+            for n in (e.get("sector_news") or [])[:3]:
+                lines.append(f"    · [板块] {n.get('title','')[:55]}")
         news = e.get("news", [])
         if not news:
             continue

@@ -23,8 +23,10 @@ _BASE = str(Path(__file__).resolve().parent.parent)   # news_aggregator/
 if _BASE not in sys.path:
     sys.path.insert(0, _BASE)
 
-from flow_config import TRACKED_ETFS, BAD_NEWS_WEIGHT, NEWS_WINDOW_DAYS  # noqa: E402
-from fetcher import fetch_stock_news, is_major_event   # noqa: E402
+from flow_config import (                                  # noqa: E402
+    TRACKED_ETFS, BAD_NEWS_WEIGHT, NEWS_WINDOW_DAYS, SECTOR_KEYWORD_OVERRIDES,
+)
+from fetcher import fetch_stock_news, is_major_event, is_title_relevant  # noqa: E402
 from sentiment import classify_sentiment               # noqa: E402
 
 
@@ -64,6 +66,45 @@ def _get_constituents(index_code: str) -> list[dict] | None:
         return None
 
 
+# 指数名里需要剥掉的通用词（剥完剩下的才是「板块关键词」）
+_INDEX_NOISE_TOKENS = (
+    "中证", "上证", "深证", "国证", "全指", "申万", "科创", "科创板",
+    "创业板", "指数", "公用事业", "产业",
+)
+# 剥完若只剩这类词，说明该指数没有明确的行业含义（宽基），不做板块匹配
+_INDEX_GENERIC_CORES = {
+    "升级", "成长", "价值", "龙头", "红利", "低波", "质量", "50", "100", "300",
+    "500", "1000", "180", "A50", "A股",
+}
+
+
+def _derive_sector_keywords(index_name: str) -> list[str]:
+    """从指数名派生板块关键词，如「中证煤炭」→「煤炭」，「中证全指电力公用事业」→「电力」。"""
+    s = (index_name or "").strip()
+    for tok in _INDEX_NOISE_TOKENS:
+        s = s.replace(tok, "")
+    s = s.strip()
+    if len(s) >= 2 and not s.isdigit() and s.upper() not in _INDEX_GENERIC_CORES:
+        return [s]
+    return []
+
+
+def _sector_keywords(etf: dict) -> list[str]:
+    """该 ETF 的板块关键词：优先用 flow_config 手工覆盖，否则从指数名派生。"""
+    ov = SECTOR_KEYWORD_OVERRIDES.get(etf.get("ticker", ""))
+    if ov is not None:
+        return list(ov)
+    return _derive_sector_keywords(etf.get("index_name", ""))
+
+
+def _is_sector_news(title: str, sector_kws: list[str]) -> bool:
+    """标题是否属于该 ETF 的板块/行业新闻（不点名单只成分股，但整体相关）。"""
+    if not sector_kws:
+        return False
+    t = title or ""
+    return any(kw in t for kw in sector_kws)
+
+
 def _analyze_etf(etf: dict) -> dict[str, Any]:
     name = etf["name"]
     index_code = etf.get("index_code", "")
@@ -82,9 +123,13 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
 
     now = datetime.now()
     cutoff = now.timestamp() - NEWS_WINDOW_DAYS * 86400
-    news_items = []
-    seen_titles: set[tuple[str, str]] = set()
+    sector_kws = _sector_keywords(etf)
+
+    direct_news: list[dict] = []          # 个股直接新闻（可归因到具体成分股）
+    sector_map: dict[str, dict] = {}      # 板块新闻（按标题去重，不归因到单只股票）
+    seen: set[tuple[str, str]] = set()
     dropped_stale = 0
+    dropped_irrelevant = 0
     # 每个成分股的情绪分列表，最后按指数权重加权平均
     per_stock_scores: dict[str, list[float]] = {}
 
@@ -97,25 +142,51 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
             if nt is not None and nt.timestamp() < cutoff:
                 dropped_stale += 1
                 continue
-            # 2) 去重：同一股票的同一标题只算一次（板块新闻会被多只股票命中）
-            key = (c["code"], (n.get("title") or "").strip())
-            if key in seen_titles:
+
+            title = (n.get("title") or "").strip()
+            # 2) 去重：同一股票的同一标题只算一次
+            key = (c["code"], title)
+            if key in seen:
                 continue
-            seen_titles.add(key)
+            seen.add(key)
 
-            sent = classify_sentiment(n.get("title", ""))
-            s = 1 if sent == "good" else (-BAD_NEWS_WEIGHT if sent == "bad" else 0)
-            n["constituent_code"] = c["code"]
-            n["constituent_name"] = c["name"]
-            n["constituent_weight"] = w
-            n["sentiment"] = sent
-            n["is_major"] = is_major_event(n.get("title", ""))
-            n["weighted_sentiment"] = round(w * s, 4)
-            per_stock_scores.setdefault(c["code"], []).append(s)
-            news_items.append(n)
+            # 3) 分层相关性判定
+            if is_title_relevant(title, c["code"], c["name"]):
+                # ① 直接相关：标题真的讲了这只成分股 → 可归因、按权重计分
+                sent = classify_sentiment(title)
+                s = 1 if sent == "good" else (-BAD_NEWS_WEIGHT if sent == "bad" else 0)
+                n["scope"] = "个股"
+                n["constituent_code"] = c["code"]
+                n["constituent_name"] = c["name"]
+                n["constituent_weight"] = w
+                n["sentiment"] = sent
+                n["is_major"] = is_major_event(title)
+                n["weighted_sentiment"] = round(w * s, 4)
+                per_stock_scores.setdefault(c["code"], []).append(s)
+                direct_news.append(n)
+            elif _is_sector_news(title, sector_kws):
+                # ② 板块相关：只作 ETF 级参考，**不**归因到某只成分股（避免张冠李戴）
+                sector_map.setdefault(title, n)
+            else:
+                # ③ 大盘综述 / 同板块别家公司稿件 → 丢弃
+                dropped_irrelevant += 1
 
-    # 按权重×情绪排序，权重高的坏消息排前
-    news_items.sort(key=lambda n: n.get("weighted_sentiment", 0))
+    # 个股直接新闻：按权重×情绪排序，权重高的坏消息排前
+    direct_news.sort(key=lambda n: n.get("weighted_sentiment", 0))
+
+    # 板块新闻：按标题去重后逐条判情绪，得到板块情绪均分（∈[-2,+1]）
+    sector_news: list[dict] = []
+    _sec_scores: list[float] = []
+    for title, n in sector_map.items():
+        sent = classify_sentiment(title)
+        s = 1 if sent == "good" else (-BAD_NEWS_WEIGHT if sent == "bad" else 0)
+        n["scope"] = "板块"
+        n["sentiment"] = sent
+        n["is_major"] = is_major_event(title)
+        _sec_scores.append(s)
+        sector_news.append(n)
+    sector_news.sort(key=lambda n: n.get("sentiment", ""))
+    sector_score = round(sum(_sec_scores) / len(_sec_scores), 4) if _sec_scores else None
 
     # 加权情绪分：先算每只成分股的平均情绪（∈[-2,+1]），再按指数权重加权平均。
     # 这样结果落在 [-2,+1] 可解读区间，不会被新闻条数放大。
@@ -137,6 +208,36 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
     weighted_score = round(score / wsum, 4) if wsum else None
     per_stock_report.sort(key=lambda x: x["avg_sentiment"])
 
+    # 置信度：直接相关的成分股太少时，加权分不具代表性。
+    # 防止「仅 1 只股票 2 条新闻 => 偏空」这类垃圾结论被当成有效信号。
+    covered = len(per_stock_scores)
+    if covered >= 5 and wsum >= 30:
+        confidence = "高"
+    elif covered >= 3 and wsum >= 15:
+        confidence = "中"
+    else:
+        confidence = "低"
+
+    if weighted_score is None:
+        bias = "无数据"
+    elif confidence == "低":
+        bias = "样本不足"          # 不给出方向性结论，避免误用
+    elif weighted_score < 0:
+        bias = "偏空"
+    elif weighted_score > 0:
+        bias = "偏多"
+    else:
+        bias = "中性"
+
+    if sector_score is None:
+        sector_bias = "无数据"
+    elif sector_score < 0:
+        sector_bias = "偏空"
+    elif sector_score > 0:
+        sector_bias = "偏多"
+    else:
+        sector_bias = "中性"
+
     return {
         "ticker": etf["ticker"],
         "name": name,
@@ -146,14 +247,19 @@ def _analyze_etf(etf: dict) -> dict[str, Any]:
         "constituent_count": len(cons),
         "top_constituents": [{"code": c["code"], "name": c["name"], "weight": c["weight"]} for c in top],
         "rest_count": len(rest),
-        "news": news_items,
-        "news_count": len(news_items),
+        "news": direct_news,
+        "news_count": len(direct_news),
+        "sector_news": sector_news,
+        "sector_news_count": len(sector_news),
         "dropped_stale": dropped_stale,
-        "covered_constituents": len(per_stock_scores),
+        "dropped_irrelevant": dropped_irrelevant,
+        "covered_constituents": covered,
         "weighted_score": weighted_score,
+        "confidence": confidence,
+        "sector_score": sector_score,
+        "sector_bias": sector_bias,
         "per_stock_sentiment": per_stock_report,
-        "bias": ("偏空" if (weighted_score or 0) < 0 else
-                 ("偏多" if (weighted_score or 0) > 0 else "中性")),
+        "bias": bias,
     }
 
 
@@ -167,10 +273,12 @@ def fetch_etf_constituent_flow() -> dict[str, Any]:
         print(f"  ▶ {etf['name']} ({etf['ticker']}) ...")
         r = _analyze_etf(etf)
         if r["ok"]:
-            print(f"    成分股 {r['constituent_count']} 只，"
-                  f"近{NEWS_WINDOW_DAYS}日新闻 {r['news_count']} 条"
-                  f"（过滤旧闻 {r['dropped_stale']} 条，覆盖 {r['covered_constituents']} 只），"
-                  f"加权情绪分 {r['weighted_score']}（{r['bias']}）")
+            print(f"    成分股 {r['constituent_count']} 只｜"
+                  f"个股相关新闻 {r['news_count']} 条（覆盖 {r['covered_constituents']} 只）"
+                  f"｜板块新闻 {r['sector_news_count']} 条"
+                  f"｜丢弃 旧闻{r['dropped_stale']}/无关{r['dropped_irrelevant']}")
+            print(f"    个股加权分 {r['weighted_score']}（{r['bias']}，置信度{r['confidence']}）"
+                  f"｜板块分 {r['sector_score']}（{r['sector_bias']}）")
         else:
             print(f"    ⚠️ {r['error']}")
         results.append(r)

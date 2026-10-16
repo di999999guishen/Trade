@@ -121,6 +121,26 @@ def is_major_event(title: str) -> bool:
     return any(kw.lower() in t for kw in MAJOR_EVENT_KEYWORDS)
 
 
+def is_title_relevant(title: str, code: str, name: str) -> bool:
+    """判断一条新闻是否真的在讲这只标的，而非大盘综述 / 同板块别家公司的稿件。
+
+    为何需要：东方财富 stock_news_em 是按关键词/板块返回的，会混入
+    「A股收评」「主力资金净流出」「实控人遭留置（其实是富祥股份）」这类
+    与目标股票无关的稿件。不校验就会把它们算到目标股票（如贵州茅台 8.6% 权重）
+    头上，直接污染「成分股加权情绪分」。
+
+    规则：标题含股票代码，或含股票全称 → 视为相关（宽松版，只做粗筛不做语义判断）。
+    """
+    t = (title or "").strip()
+    if not t:
+        return False
+    if code and str(code) in t:
+        return True
+    if name and name in t:
+        return True
+    return False
+
+
 def fetch_all_news() -> dict[str, list[dict[str, Any]]]:
     """抓取所有市场所有自选股新闻（单品失败不中断整体）"""
     all_news: dict[str, list[dict[str, Any]]] = {"A股": [], "港股": [], "美股": []}
