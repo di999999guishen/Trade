@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>超强厄尔尼诺 · A股板块传导链与优先级研判（2026-10-15）</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; background: #f5f6f8; color: #1f2329; line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px; padding: 24px 28px; margin-bottom: 18px; }
+  header h1 { font-size: 21px; font-weight: 700; color: #1f2329; }
+  header .sub { font-size: 12.5px; color: #8a919e; margin-top: 8px; }
+  .tag { display: inline-block; background: #fdeceb; color: #c0392b; border: 1px solid #f5c6c0; font-size: 12px; padding: 2px 10px; border-radius: 20px; margin-right: 6px; font-weight: 600; }
+  .card { background: #fff; border: 1px solid #e4e7ed; border-radius: 10px; padding: 22px 26px; margin-bottom: 18px; }
+  .card h2 { font-size: 16.5px; font-weight: 700; margin-bottom: 14px; padding-left: 10px; border-left: 4px solid #c0392b; }
+  .tldr { background: #fff8f0; border: 1px solid #f3d9b8; }
+  .tldr h2 { border-left-color: #d97706; }
+  .tldr p.big { font-size: 15px; font-weight: 600; color: #7c2d12; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+  th { background: #f2f3f5; color: #4e5562; font-weight: 600; padding: 8px 10px; border: 1px solid #e4e7ed; text-align: left; white-space: nowrap; }
+  td { padding: 8px 10px; border: 1px solid #e4e7ed; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .up { color: #c0392b; font-weight: 700; }
+  .down { color: #1e8e3e; font-weight: 700; }
+  .flat { color: #8a919e; }
+  .t1 { color: #c0392b; font-weight: 700; }
+  .t2 { color: #b45309; font-weight: 700; }
+  .t3 { color: #1d4ed8; font-weight: 700; }
+  .avoid { color: #6b7280; font-weight: 700; }
+  .note { font-size: 12px; color: #8a919e; margin-top: 8px; }
+  ul { padding-left: 20px; }
+  li { margin-bottom: 6px; font-size: 13.5px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .mini { background: #fafbfc; border: 1px solid #e4e7ed; border-radius: 8px; padding: 14px 16px; }
+  .mini h3 { font-size: 13.5px; margin-bottom: 8px; }
+  .disclaimer { background: #f2f3f5; border: 1px dashed #b6bac2; font-size: 12.5px; color: #4e5562; padding: 14px 18px; border-radius: 8px; }
+  .src { font-size: 11.5px; color: #9aa0ab; }
+  .warnbox { background: #fdf2f2; border: 1px solid #f5c6c0; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #7c2d12; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>超强厄尔尼诺 · A股板块传导链与优先级研判</h1>
+  <div class="sub">
+    <span class="tag">事件已确认</span><span class="tag">非新增催化</span><span class="tag">已炒两轮</span><br>
+    行情数据：腾讯财经（ETF/个股日线，截至 2026-10-14 收盘；10-15 为 09:20 集合竞价快照）｜事件来源：国家气候中心 2026-10-09、中国气象局 2026-10-10 发布会（一手）｜报告生成：2026-10-15 上午（A股盘前）
+  </div>
+</header>
+
+<div class="card tldr">
+  <h2>结论先行</h2>
+  <p class="big">一句话：这条新闻本身不是新催化——市场已经为此炒了两轮；「最直接」的农业/种业/糖链条 10-14 刚开始退潮，今天竞价继续低开，「继续涨」性价比最差；真正逻辑最硬的主升在 3-6 个月后的减产兑现期，现在只适合等回调、不适合追高。</p>
+  <table>
+    <tr><th style="width:90px">梯队</th><th>主题</th><th>当前位置（10-14 实况）</th><th>判断</th></tr>
+    <tr><td class="t1">第一梯队</td><td>煤炭、电力（火电保供）</td><td>煤炭 5 日 4 涨（+1.83/+1.49/−1.85/+1.41/+0.85），今日竞价仍高开 +0.46%；电力 10-14 +1.44%</td><td>趋势仍在，但归因不纯是厄尔尼诺（安监限产/反内卷权重更大），别用气候叙事追高</td></tr>
+    <tr><td class="t2">第二梯队</td><td>软商品链（糖/橡胶/棕榈油）、种业粮食</td><td>10-09 大涨后 10-12 起退潮：中粮糖业 10-14 −8.84%、南宁糖业 −8.25%、海南橡胶 −5.62%；粮食 ETF 三连阴，今日竞价 −1.33%/−0.63%</td><td>逻辑最硬（供给端），但交易位置最差；等回调后的第二波，中期主升在 2027 年减产兑现</td></tr>
+    <tr><td class="t3">第三梯队</td><td>化肥/农药（成本传导）、食品饮料（通胀传导）</td><td>豆粕 ETF 10-14 +0.44%、食品饮料 +0.44%，基本没涨，位置低</td><td>低位待传导，防御型参与；传导时滞 1-2 个季度，适合埋伏不适合追</td></tr>
+    <tr><td class="avoid">回避</td><td>连板高位小票、食品加工中游</td><td>万向德农曾 9 天 6 板、金健米业 12 日 7 板后 10-12 见大阴线（农发种业单日 −8.71%、金健米业主力净流出 4.44 亿）</td><td>高位分歧已现，退潮期接力风险极大；中游被原料涨价挤压利润，券商明确建议长线回避</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>一、事件核实（一手来源，非二手转述）</h2>
+  <ul>
+    <li><b>已确认</b>：国家气候中心 2026-10-09 宣布，2026 年 9 月正式形成一次<b>东部型超强厄尔尼诺</b>事件。Niño3.4 区海温指数 9 月达 <b>2.94℃</b>（较 8 月 +0.35℃），7—9 月滑动平均 2.54℃，已远超强事件标准（≥2.0℃）、站上超强标准（≥2.5℃）。（来源：国家气候中心，经人民日报 2026-10-12 刊发）</li>
+    <li><b>强度预测</b>：中国气象局 2026-10-10 发布会——海温指数峰值预计出现在 <b>11 月前后，达 3.2~3.5℃</b>，将明显超过历史最大值（2.8℃，2014—2016 年），成为有系统监测以来最强；此前三次超强分别为 1982—83、1997—98、2014—16。WMO：持续至 2027 年 2 月概率接近 100%。</li>
+    <li><b>对我国</b>：秋季（10—11 月）中东部降水偏多、江南/西南偏多 5~8 成；冬季（2026.12—2027.2）<b>气温总体偏高（暖冬）</b>、寒潮频次略偏多；2027 年春夏快速衰减但极端天气仍频发、夏季高温热浪更强更广。</li>
+  </ul>
+  <div class="warnbox">⚠️ 交易层面的关键事实：这不是 10-15 的新消息。该主题 8 月下旬起已被市场反复交易——8/24-28 粮食板块五连阳周涨超 13%、9/1 批量涨停、9/2 大分歧（板块主力净流出 17.19 亿）、10/9 第三轮拉升（避险资金驱动）、10/12 起重回退潮。<b>「新闻已确认」与「还能涨多少」是两个问题。</b></div>
+</div>
+
+<div class="card">
+  <h2>二、传导链：从气候冲击到 A 股板块（四层级）</h2>
+  <svg viewBox="0 0 680 470" xmlns="http://www.w3.org/2000/svg" font-family="PingFang SC, Microsoft YaHei, sans-serif">
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#9aa0ab"/>
+      </marker>
+    </defs>
+    <!-- column titles -->
+    <text x="92" y="26" font-size="13" font-weight="700" fill="#1f2329" text-anchor="middle">气候冲击</text>
+    <text x="277" y="26" font-size="13" font-weight="700" fill="#1f2329" text-anchor="middle">产区影响</text>
+    <text x="462" y="26" font-size="13" font-weight="700" fill="#1f2329" text-anchor="middle">品种/价格</text>
+    <text x="632" y="26" font-size="13" font-weight="700" fill="#c0392b" text-anchor="middle">A股板块</text>
+    <line x1="20" y1="36" x2="660" y2="36" stroke="#e4e7ed" stroke-width="1"/>
+
+    <!-- Level 1: direct reduction -->
+    <rect x="20" y="48" width="144" height="66" rx="6" fill="#fdf2f2" stroke="#f0b8b0"/>
+    <text x="92" y="68" font-size="11.5" font-weight="700" fill="#7c2d12" text-anchor="middle">超强厄尔尼诺</text>
+    <text x="92" y="84" font-size="10" fill="#7c2d12" text-anchor="middle">Niño3.4=2.94℃</text>
+    <text x="92" y="99" font-size="10" fill="#7c2d12" text-anchor="middle">11月峰 3.2~3.5℃</text>
+    <rect x="205" y="48" width="144" height="66" rx="6" fill="#fdf2f2" stroke="#f0b8b0"/>
+    <text x="277" y="68" font-size="11.5" font-weight="700" fill="#7c2d12" text-anchor="middle">东南亚/南亚干旱</text>
+    <text x="277" y="84" font-size="10" fill="#7c2d12" text-anchor="middle">印尼·马来·泰国·印度</text>
+    <text x="277" y="99" font-size="10" fill="#7c2d12" text-anchor="middle">叠加正印度洋偶极子</text>
+    <rect x="390" y="48" width="144" height="66" rx="6" fill="#fdf2f2" stroke="#f0b8b0"/>
+    <text x="462" y="68" font-size="11.5" font-weight="700" fill="#7c2d12" text-anchor="middle">软商品减产</text>
+    <text x="462" y="84" font-size="10" fill="#7c2d12" text-anchor="middle">棕榈油·橡胶·白糖</text>
+    <text x="462" y="99" font-size="10" fill="#7c2d12" text-anchor="middle">印度糖库存六年最低+禁出口</text>
+    <rect x="575" y="48" width="100" height="66" rx="6" fill="#c0392b"/>
+    <text x="625" y="70" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">①直接减产</text>
+    <text x="625" y="87" font-size="10" fill="#fdeceb" text-anchor="middle">糖业·橡胶</text>
+    <text x="625" y="102" font-size="10" fill="#fdeceb" text-anchor="middle">种植·种业</text>
+    <line x1="164" y1="81" x2="199" y2="81" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="349" y1="81" x2="384" y2="81" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="534" y1="81" x2="569" y2="81" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- Level 2: demand pull -->
+    <rect x="20" y="132" width="144" height="66" rx="6" fill="#fff7ed" stroke="#f3d9b8"/>
+    <text x="92" y="152" font-size="11.5" font-weight="700" fill="#7c4a03" text-anchor="middle">极端高温/南涝北旱</text>
+    <text x="92" y="168" font-size="10" fill="#7c4a03" text-anchor="middle">夏季高温热浪更强</text>
+    <text x="92" y="183" font-size="10" fill="#7c4a03" text-anchor="middle">西南水电出力受抑</text>
+    <rect x="205" y="132" width="144" height="66" rx="6" fill="#fff7ed" stroke="#f3d9b8"/>
+    <text x="277" y="152" font-size="11.5" font-weight="700" fill="#7c4a03" text-anchor="middle">制冷负荷↑ 水电↓</text>
+    <text x="277" y="168" font-size="10" fill="#7c4a03" text-anchor="middle">火电保供补位</text>
+    <text x="277" y="183" font-size="10" fill="#7c4a03" text-anchor="middle">空调白电去库存</text>
+    <rect x="390" y="132" width="144" height="66" rx="6" fill="#fff7ed" stroke="#f3d9b8"/>
+    <text x="462" y="152" font-size="11.5" font-weight="700" fill="#7c4a03" text-anchor="middle">能源需求</text>
+    <text x="462" y="168" font-size="10" fill="#7c4a03" text-anchor="middle">动力煤·火电·白电</text>
+    <text x="462" y="183" font-size="10" fill="#b45309" text-anchor="middle">（暖冬反向压制取暖需求）</text>
+    <rect x="575" y="132" width="100" height="66" rx="6" fill="#d97706"/>
+    <text x="625" y="154" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">②需求拉动</text>
+    <text x="625" y="171" font-size="10" fill="#fff7ed" text-anchor="middle">电力·火电</text>
+    <text x="625" y="186" font-size="10" fill="#fff7ed" text-anchor="middle">煤炭·白电</text>
+    <line x1="164" y1="165" x2="199" y2="165" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="349" y1="165" x2="384" y2="165" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="534" y1="165" x2="569" y2="165" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- Level 3: cost pass-through -->
+    <rect x="20" y="216" width="144" height="66" rx="6" fill="#eff6ff" stroke="#b6ccf0"/>
+    <text x="92" y="236" font-size="11.5" font-weight="700" fill="#1e3a6e" text-anchor="middle">农产品涨价</text>
+    <text x="92" y="252" font-size="10" fill="#1e3a6e" text-anchor="middle">种植积极性↑</text>
+    <text x="92" y="267" font-size="10" fill="#1e3a6e" text-anchor="middle">单位用量↑</text>
+    <rect x="205" y="216" width="144" height="66" rx="6" fill="#eff6ff" stroke="#b6ccf0"/>
+    <text x="277" y="236" font-size="11.5" font-weight="700" fill="#1e3a6e" text-anchor="middle">农资需求</text>
+    <text x="277" y="252" font-size="10" fill="#1e3a6e" text-anchor="middle">化肥·农药·种子</text>
+    <rect x="390" y="216" width="144" height="66" rx="6" fill="#eff6ff" stroke="#b6ccf0"/>
+    <text x="462" y="236" font-size="11.5" font-weight="700" fill="#1e3a6e" text-anchor="middle">成本传导</text>
+    <text x="462" y="252" font-size="10" fill="#1e3a6e" text-anchor="middle">滞后 1-2 个季度</text>
+    <text x="462" y="267" font-size="10" fill="#1e3a6e" text-anchor="middle">食品饮料提价能力</text>
+    <rect x="575" y="216" width="100" height="66" rx="6" fill="#1d4ed8"/>
+    <text x="625" y="238" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">③成本传导</text>
+    <text x="625" y="255" font-size="10" fill="#dbeafe" text-anchor="middle">化肥·农药</text>
+    <text x="625" y="270" font-size="10" fill="#dbeafe" text-anchor="middle">食品饮料</text>
+    <line x1="164" y1="249" x2="199" y2="249" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="349" y1="249" x2="384" y2="249" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="534" y1="249" x2="569" y2="249" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- Level 4: inflation spillover -->
+    <rect x="20" y="300" width="144" height="66" rx="6" fill="#f5f3ff" stroke="#cbb8f0"/>
+    <text x="92" y="320" font-size="11.5" font-weight="700" fill="#4c1d95" text-anchor="middle">全球食品通胀</text>
+    <text x="92" y="336" font-size="10" fill="#4c1d95" text-anchor="middle">供给收缩+贸易流改变</text>
+    <rect x="205" y="300" width="144" height="66" rx="6" fill="#f5f3ff" stroke="#cbb8f0"/>
+    <text x="277" y="320" font-size="11.5" font-weight="700" fill="#4c1d95" text-anchor="middle">再通胀+供给扰动</text>
+    <text x="277" y="336" font-size="10" fill="#4c1d95" text-anchor="middle">南美铜矿洪涝·印尼镍</text>
+    <rect x="390" y="300" width="144" height="66" rx="6" fill="#f5f3ff" stroke="#cbb8f0"/>
+    <text x="462" y="320" font-size="11.5" font-weight="700" fill="#4c1d95" text-anchor="middle">工业品/运价</text>
+    <text x="462" y="336" font-size="10" fill="#4c1d95" text-anchor="middle">铜·航运·化纤</text>
+    <rect x="575" y="300" width="100" height="66" rx="6" fill="#6d28d9"/>
+    <text x="625" y="322" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">④补涨轮动</text>
+    <text x="625" y="339" font-size="10" fill="#ede9fe" text-anchor="middle">航运·化纤</text>
+    <text x="625" y="354" font-size="10" fill="#ede9fe" text-anchor="middle">工业金属</text>
+    <line x1="164" y1="333" x2="199" y2="333" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="349" y1="333" x2="384" y2="333" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="534" y1="333" x2="569" y2="333" stroke="#9aa0ab" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- lag annotation -->
+    <rect x="20" y="392" width="655" height="60" rx="6" fill="#f2f3f5" stroke="#d4d7dd"/>
+    <text x="34" y="414" font-size="11.5" font-weight="700" fill="#4e5562">时滞规律（多家券商复盘共识）：气候冲击→实体供需传导 9~12 个月；投机资金事前抢跑</text>
+    <text x="34" y="432" font-size="11" fill="#4e5562">软商品价格主升滞后气候峰值 3~6 个月；棕榈油高点滞后约 4 个季度、橡胶滞后 4~5 个季度——即真正的减产兑现在 2027 年，当前处于「预期炒作→减产兑现」过渡窗口</text>
+  </svg>
+  <div class="note">注：①层级弹性最高但 A 股载体纯度有限——白糖、棕榈油、天然橡胶在 A 股均无专属 ETF，只能借道相关个股（中粮糖业/南宁糖业/海南橡胶），纯度低于期货端工具。</div>
+</div>
+
+<div class="card">
+  <h2>三、近一周实况：谁在涨、谁已经开始退潮（10-08 ~ 10-14，ETF 代理口径）</h2>
+  <div id="chart1" style="width:100%;height:360px;"></div>
+  <table>
+    <tr><th>主题（代理 ETF）</th><th>10-08</th><th>10-09</th><th>10-12</th><th>10-13</th><th>10-14</th><th>10-15 竞价(09:20)</th><th>5 日累计</th></tr>
+    <tr><td>煤炭 ETF（515220）</td><td class="up">+1.83%</td><td class="up">+1.49%</td><td class="down">−1.85%</td><td class="up">+1.41%</td><td class="up">+0.85%</td><td class="up">+0.46%</td><td class="up">+2.73%</td></tr>
+    <tr><td>电力 ETF（159611）</td><td class="up">+1.84%</td><td class="flat">0.00%</td><td class="down">−0.19%</td><td class="down">−0.57%</td><td class="up">+1.44%</td><td class="down">−0.28%</td><td class="up">+2.50%</td></tr>
+    <tr><td>粮食 ETF 易方达（159038）</td><td class="flat">0.00%</td><td class="up">+4.81%</td><td class="down">−3.96%</td><td class="flat">0.00%</td><td class="down">−1.95%</td><td class="down">−1.33%</td><td class="down">−1.53%</td></tr>
+    <tr><td>豆粕 ETF（159985）</td><td class="up">+0.13%</td><td class="up">+1.45%</td><td class="down">−0.56%</td><td class="down">−0.48%</td><td class="up">+0.44%</td><td class="down">−1.05%</td><td class="flat">−0.02%</td></tr>
+    <tr><td>有色 ETF（512400）</td><td class="down">−0.99%</td><td class="up">+2.31%</td><td class="down">−3.17%</td><td class="up">+0.63%</td><td class="down">−1.88%</td><td class="down">−1.85%</td><td class="down">−3.14%</td></tr>
+    <tr><td>黄金 ETF（518880）</td><td class="down">−1.84%</td><td class="up">+1.69%</td><td class="down">−0.37%</td><td class="up">+0.16%</td><td class="down">−1.14%</td><td class="flat">—</td><td class="down">−1.51%</td></tr>
+    <tr><td>食品饮料 ETF（515170）</td><td class="flat">0.00%</td><td class="up">+0.65%</td><td class="flat">0.00%</td><td class="down">−0.87%</td><td class="up">+0.44%</td><td class="flat">—</td><td class="up">+0.22%</td></tr>
+  </table>
+  <div class="note">数据来源：腾讯财经日线接口（10-14 收盘）；10-15 为 09:20 集合竞价快照。东财板块接口本次被代理层 WAF 阻断（间歇性已知现象），已按项目数据源纪律降级腾讯源。A 股语境红涨绿跌。</div>
+  <div class="warnbox">⚠️ 退潮的实锤信号：糖双龙头 10-14 单日 −8.84%/−8.25%（中粮糖业/南宁糖业，此前 5 日连涨）；海南橡胶 −5.62%；粮食三只 ETF 10-12 起两波下杀；今日 09:20 竞价粮食系继续低开。这是「涨预期」阶段结束、进入分歧期的典型形态。</div>
+</div>
+
+<div class="card">
+  <h2>四、优先级排序与可执行框架</h2>
+  <table>
+    <tr><th style="width:150px">主题</th><th>逻辑硬度</th><th>位置</th><th>催化持续性</th><th>拥挤度</th><th>结论</th></tr>
+    <tr><td><b>煤炭/火电</b></td><td>中（暖冬压制取暖需求，但当前趋势+安监限产独立支撑）</td><td>中</td><td>中（旺季 11-1 月，暖冬是最大反证）</td><td>中</td><td class="t1">趋势仍在可跟踪，但勿以厄尔尼诺叙事追高；跌破 10-12 低点离场</td></tr>
+    <tr><td><b>糖/橡胶/软商品</b></td><td><b>高</b>（供给端确定性最高：东南亚干旱+印度禁出口+低库存）</td><td class="down">差（10-14 龙头 −8%+）</td><td><b>高</b>（主升滞后 3-6 个月，2027 兑现）</td><td>高</td><td class="t2">不接飞刀；等回调 20%+ 或回 20 日线的第二波，用小仓位</td></tr>
+    <tr><td><b>种业/粮食种植</b></td><td>中高（气候+政策双催化：一号文件种业振兴、1.45 万亿斤）</td><td class="down">差（9/1 与 10/9 两轮已炒）</td><td>中</td><td>高</td><td class="t2">只低吸不追板；回避 9 天 6 板/12 日 7 板类高位票</td></tr>
+    <tr><td><b>化肥/农药</b></td><td>中（成本传导滞后 1-2 季度）</td><td><b>好</b>（基本没涨）</td><td>中</td><td>低</td><td class="t3">低位埋伏型，等粮价实质上行传导</td></tr>
+    <tr><td><b>食品饮料</b></td><td>中（提价能力+防御属性）</td><td>好</td><td>中（慢变量）</td><td>低</td><td class="t3">防御配置型，赚通胀传导不急的钱</td></tr>
+    <tr><td>航运/化纤/工业金属</td><td>低-中（主题补涨，与厄尔尼诺关联弱）</td><td>中</td><td>低</td><td>中</td><td class="avoid">仅作补涨备选，不主动配置</td></tr>
+  </table>
+
+  <div class="grid2" style="margin-top:14px">
+    <div class="mini">
+      <h3>🚫 不做什么</h3>
+      <ul>
+        <li>不追 10-09 拉升、10-14 已退潮的种业/糖高位股</li>
+        <li>不用「厄尔尼诺」叙事去追煤炭——归因不纯，旺季末尾+暖冬风险</li>
+        <li>不碰食品加工中游（原料涨价挤压利润，券商建议长线回避）</li>
+      </ul>
+    </div>
+    <div class="mini">
+      <h3>✅ 等什么信号再动手</h3>
+      <ul>
+        <li>价格端：ICE 原糖/郑糖续创新高、泰国橡胶原料上行、马棕油走强、东南亚干旱持续验证</li>
+        <li>政策端：印度糖出口政策、国内收储节奏、进口成本数据</li>
+        <li>交易端：软商品龙头回调 20%+ 或粮食 ETF 回踩 10-12 低点附近缩量企稳</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>五、风险与反向声音（必须读）</h2>
+  <ul>
+    <li><b>「涨预期、卖现实」是农业题材经典特征</b>（浙商证券复盘）：本轮 9/1 与 10/9 两轮脉冲后均以大阴线分歧收场，历史不会缺席。</li>
+    <li><b>时滞是双刃剑</b>：多数农产品价格不随事件确认立刻上涨，主升滞后峰值 3-6 个月、棕榈油/橡胶滞后 4-5 个季度——现在进场要承担 1-2 个季度的持有成本和反复回撤。</li>
+    <li><b>暖冬反向风险</b>：国家气候中心自己预测今冬气温偏高——若暖冬兑现，取暖能源需求下行，与「高温推升用电」逻辑直接冲突（国海证券：暖冬压制原油与取暖需求）。</li>
+    <li><b>品类分化不是单边</b>：厄尔尼诺对美洲大豆/玉米是「南美涝」可能增产，与「亚洲旱」逻辑相反；盲目押注全农业板块不可取。</li>
+    <li><b>拥挤度风险</b>：浙商证券明确警告——多头仓位高度拥挤的共识环境下，须防范预期超调；一旦宏观预期差出现，高拥挤度多头可能无序踩踏。</li>
+    <li><b>A 股载体纯度缺口</b>：白糖/棕榈油/橡胶无专属 ETF，个股纯度与波动都偏离商品本身，按名称匹配板块会犯错（本报告板块判断均以 ETF/个股实际行情验证，未按名称臆测）。</li>
+    <li><b>历史类比的局限</b>：1997-98 橡胶 +76%、原糖 +58%，2015-16 郑糖 +65%——历史幅度不代表本轮，样本仅三次超强事件。</li>
+  </ul>
+</div>
+
+<div class="disclaimer">
+  <b>免责声明</b>：以上内容基于公开数据和量化分析，仅供参考，不构成投资建议。市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，必要时咨询持牌专业机构。过往表现不预示未来收益。<br>
+  <span class="src">数据来源与时点：国家气候中心（2026-10-09）/中国气象局发布会（2026-10-10，一手）；腾讯财经日线与集合竞价接口（2026-10-14 收盘、10-15 09:20）；券商观点转引自公开报道（中信、申万宏源、浙商、国海、国盛、财信、银河、中金，非一手来源，需核实原文）。东财板块接口本次被代理层阻断，已按项目纪律降级腾讯源并注明。</span>
+</div>
+
+</div>
+
+<script>
+echarts.init(document.getElementById('chart1')).setOption({
+  tooltip: { trigger: 'axis', valueFormatter: function (v) { return v + '%'; } },
+  legend: { data: ['煤炭ETF', '电力ETF', '粮食ETF易方达', '豆粕ETF', '有色ETF', '食品饮料ETF'], top: 0 },
+  grid: { left: 46, right: 20, top: 40, bottom: 30 },
+  xAxis: { type: 'category', data: ['10-08', '10-09', '10-12', '10-13', '10-14'] },
+  yAxis: { type: 'value', name: '日涨跌(%)', splitLine: { lineStyle: { color: '#eceef2' } } },
+  series: [
+    { name: '煤炭ETF', type: 'bar', data: [1.83, 1.49, -1.85, 1.41, 0.85], itemStyle: { color: '#c0392b' } },
+    { name: '电力ETF', type: 'bar', data: [1.84, 0.00, -0.19, -0.57, 1.44], itemStyle: { color: '#d97706' } },
+    { name: '粮食ETF易方达', type: 'bar', data: [0.00, 4.81, -3.96, 0.00, -1.95], itemStyle: { color: '#1d4ed8' } },
+    { name: '豆粕ETF', type: 'bar', data: [0.13, 1.45, -0.56, -0.48, 0.44], itemStyle: { color: '#6d28d9' } },
+    { name: '有色ETF', type: 'bar', data: [-0.99, 2.31, -3.17, 0.63, -1.88], itemStyle: { color: '#0e7490' } },
+    { name: '食品饮料ETF', type: 'bar', data: [0.00, 0.65, 0.00, -0.87, 0.44], itemStyle: { color: '#1e8e3e' } }
+  ]
+});
+</script>
+</body>
+</html>
