@@ -1,0 +1,194 @@
+[premium] 159792.SZ 港股通互联网ETF富国: 收盘=0.5300 NAV=0.5351 溢价=-0.95% 折价
+[premium] 159740.SZ 恒生科技ETF大成: 收盘=0.5100 NAV=0.5147 溢价=-0.91% 折价
+[runner] tickers = ['159792.SZ', '159740.SZ', '159158.SZ']
+[runner] premium evidence:
+
+【跨境港股ETF溢价证据 — 每日动态重算，注入纪律：先算溢价再谈方向】
+
+数据时点：境内 price_date=2026-10-13 收盘；NAV=2026-10-13（T+1披露，与价格同日故无滚动）。
+口径：溢价 = 境内price_date收盘 / NAV(price_date) - 1。
+
+- 159792.SZ 港股通互联网ETF富国：收盘 0.5300｜NAV 2026-10-13 0.5351｜**溢价 -0.95%**｜判定 折价
+- 159740.SZ 恒生科技ETF大成：收盘 0.5100｜NAV 2026-10-13 0.5147｜**溢价 -0.91%**｜判定 折价
+
+项目纪律（不可违背）：
+1. 溢价 >5% 直接否决买入；≥3% 必须在结论中提示。
+2. 指数方向与载体分开评估：可以看多港股科技/互联网，但「买入这只场内ETF」是另一决策。
+3. 溢价数学含义：+X% 意味着指数原地不动就亏损约 X%；需指数先涨同等幅度持有人才回本。
+4. 跨境ETF溢价通常伴随外汇额度紧张/暂停申购；收敛路径多为境内价格补跌。
+5. 替代：场外联接按净值申购无溢价，但当前多数日限额仅5-10元或暂停，建仓受限。
+
+硬性要求：Buy/Overweight 须显式算「指数预期涨幅能否覆盖溢价」；含 premium_pct 与 premium_verdict 字段。
+
+【159158.SZ 电力ETF景顺】纯A股行业ETF，无跨境溢价，按技术面/基本面/资金流评估，不受上述溢价纪律约束。
+[preflight] OK - all vendor chains resolvable
+2026-10-14 14:13:01,354 [INFO] langchain-openai detected system proxy configuration and no explicit `http_socket_options` / `http_client` / `http_async_client` / `openai_proxy`; skipping the custom `httpx` transport so httpx's env-proxy auto-detection applies. Pass `http_socket_options=[...]` to opt back into kernel-level TCP keepalive tuning on top of the env proxy.
+2026-10-14 14:13:05,085 [WARNING] Yahoo Finance rate limited, retrying in 2s (attempt 1/3)
+2026-10-14 14:13:07,711 [WARNING] Yahoo Finance rate limited, retrying in 4s (attempt 2/3)
+2026-10-14 14:13:12,335 [WARNING] Yahoo Finance rate limited, retrying in 8s (attempt 3/3)
+2026-10-14 14:13:21,516 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:21,517 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:21,523 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:21,530 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+
+运行时间: 2026-10-14 14:12
+分析日期: 2026-10-14
+分析标的: 159792.SZ, 159740.SZ, 159158.SZ
+固定每日: SPY, QQQ, GLD（黄金ETF代理）
+
+[1/3] 开始分析 159792.SZ ...
+  0%|          | 0/16 [00:00<?, ?it/s]
+  0%|          | 0/4 [00:00<?, ?it/s][A2026-10-14 14:13:24,898 [WARNING] Yahoo Finance rate limited, retrying in 2s (attempt 1/3)
+
+ 25%|██▌       | 1/4 [00:00<00:00,  5.56it/s][A
+ 50%|█████     | 2/4 [00:00<00:00,  6.34it/s][A
+ 75%|███████▌  | 3/4 [00:00<00:00,  7.25it/s][A
+                                             [A2026-10-14 14:13:26,497 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:27,969 [WARNING] Yahoo Finance rate limited, retrying in 4s (attempt 2/3)
+                                      2026-10-14 14:13:30,968 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:32,468 [WARNING] Domestic closes unavailable for 159208: No market data for '159208': Sina US unexpected format: <class 'list'>
+2026-10-14 14:13:33,424 [WARNING] Yahoo Finance rate limited, retrying in 8s (attempt 3/3)
+2026-10-14 14:13:34,787 [WARNING] Domestic closes unavailable for 159655.SS: No market data for 'sh159655': Sina returned empty data
+2026-10-14 14:13:43,190 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:51,100 [WARNING] Polymarket search failed for 'Fed decision October 2026': HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /public-search?q=Fed+decision+October+2026&limit_per_type=20 (Caused by ConnectTimeoutError(<HTTPSConnection(host='gamma-api.polymarket.com', port=443) at 0x1fe1c68b610>, 'Connection to gamma-api.polymarket.com timed out. (connect timeout=30)'))
+2026-10-14 14:13:51,268 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:13:54,280 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:14:27,893 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:14:48,678 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:15:41,666 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:16:07,897 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:16:24,432 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:16:57,179 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:17:41,762 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:18:23,507 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:18:39,669 [WARNING] Portfolio Manager: structured-output attempt 1/2 failed (the model answered without calling the tool)
+2026-10-14 14:18:39,875 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:18:54,991 [WARNING] Yahoo Finance rate limited, retrying in 2s (attempt 1/3)
+2026-10-14 14:18:59,643 [WARNING] Yahoo Finance rate limited, retrying in 4s (attempt 2/3)
+2026-10-14 14:19:04,493 [WARNING] Yahoo Finance rate limited, retrying in 8s (attempt 3/3)
+2026-10-14 14:19:13,472 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:19:13,477 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:19:13,501 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:19:13,694 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:19:15,764 [WARNING] Yahoo Finance rate limited, retrying in 2s (attempt 1/3)
+2026-10-14 14:19:19,084 [WARNING] Yahoo Finance rate limited, retrying in 4s (attempt 2/3)
+2026-10-14 14:19:19,185 [WARNING] Domestic closes unavailable for 159208: No market data for '159208': Sina US unexpected format: <class 'list'>
+2026-10-14 14:19:20,332 [WARNING] Domestic closes unavailable for 159655.SS: No market data for 'sh159655': Sina returned empty data
+  ✅ 159792.SZ 预测完成: Underweight
+  📄 报告: E:\Trade\TradingAgents\results\daily\159792.SZ_20261014_141259_737780_52c32115817745efb02353ece9f5320f.md
+  📊 摘要: E:\Trade\TradingAgents\results\daily\159792.SZ_20261014_141259_737780_52c32115817745efb02353ece9f5320f.json
+
+[2/3] 开始分析 159740.SZ ...
+  0%|          | 0/16 [00:00<?, ?it/s]
+  0%|          | 0/16 [00:00<?, ?it/s][A  6%|▋         | 1/16 [00:01<00:15,  1.06s/it]
+
+  0%|          | 0/16 [00:00<?, ?it/s][A[A
+
+  6%|▋         | 1/16 [00:01<00:17,  1.17s/it][A[A
+  6%|▋         | 1/16 [00:01<00:21,  1.42s/it][A2026-10-14 14:19:23,637 [WARNING] Yahoo Finance rate limited, retrying in 8s (attempt 3/3)
+
+
+ 12%|█▎        | 2/16 [00:03<00:21,  1.56s/it][A[A
+
+ 19%|█▉        | 3/16 [00:04<00:19,  1.52s/it][A[A
+ 12%|█▎        | 2/16 [00:04<00:36,  2.63s/it][A
+ 19%|█▉        | 3/16 [00:05<00:23,  1.84s/it][A
+
+ 25%|██▌       | 4/16 [00:06<00:18,  1.58s/it][A[A 12%|█▎        | 2/16 [00:07<00:59,  4.24s/it]
+
+ 31%|███▏      | 5/16 [00:07<00:15,  1.40s/it][A[A
+ 25%|██▌       | 4/16 [00:07<00:21,  1.78s/it][A
+                                              [A                                              
+
+                                              [A[A2026-10-14 14:19:35,443 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:19:37,500 [WARNING] Polymarket search failed for 'recession 2026': HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /public-search?q=recession+2026&limit_per_type=20 (Caused by ConnectTimeoutError(<HTTPSConnection(host='gamma-api.polymarket.com', port=443) at 0x1fe1c441090>, 'Connection to gamma-api.polymarket.com timed out. (connect timeout=30)'))
+2026-10-14 14:19:37,599 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:19:42,105 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  7.85it/s]100%|██████████| 4/4 [00:00<00:00,  9.22it/s]                                             2026-10-14 14:19:50,662 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:20:04,064 [WARNING] Polymarket search failed for 'US recession': HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /public-search?q=US+recession&limit_per_type=20 (Caused by ConnectTimeoutError(<HTTPSConnection(host='gamma-api.polymarket.com', port=443) at 0x1fe1c443390>, 'Connection to gamma-api.polymarket.com timed out. (connect timeout=30)'))
+2026-10-14 14:20:04,527 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:20:08,918 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:20:50,583 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:21:25,228 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:22:05,141 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:22:30,377 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:23:05,480 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:23:52,642 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:24:56,776 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:25:31,627 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:25:49,523 [WARNING] Portfolio Manager: structured-output attempt 1/2 failed (the model answered without calling the tool)
+2026-10-14 14:25:49,609 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:05,378 [WARNING] Yahoo Finance rate limited, retrying in 2s (attempt 1/3)
+2026-10-14 14:27:08,086 [WARNING] Yahoo Finance rate limited, retrying in 4s (attempt 2/3)
+2026-10-14 14:27:13,426 [WARNING] Yahoo Finance rate limited, retrying in 8s (attempt 3/3)
+2026-10-14 14:27:23,156 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:23,211 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:23,529 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:23,599 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+  ✅ 159740.SZ 预测完成: Underweight
+  📄 报告: E:\Trade\TradingAgents\results\daily\159740.SZ_20261014_141259_737780_52c32115817745efb02353ece9f5320f.md
+  📊 摘要: E:\Trade\TradingAgents\results\daily\159740.SZ_20261014_141259_737780_52c32115817745efb02353ece9f5320f.json
+
+[3/3] 开始分析 159158.SZ ...
+  0%|          | 0/16 [00:00<?, ?it/s]
+  0%|          | 0/16 [00:00<?, ?it/s][A
+
+  0%|          | 0/16 [00:00<?, ?it/s][A[A
+
+
+  0%|          | 0/16 [00:00<?, ?it/s][A[A[A
+
+
+
+  0%|          | 0/4 [00:00<?, ?it/s][A[A[A[A
+
+  6%|▋         | 1/16 [00:01<00:19,  1.27s/it][A[A
+
+
+
+ 25%|██▌       | 1/4 [00:00<00:00,  7.93it/s][A[A[A[A
+
+
+
+ 50%|█████     | 2/4 [00:00<00:00,  8.60it/s][A[A[A[A2026-10-14 14:27:27,008 [WARNING] Yahoo Finance rate limited, retrying in 2s (attempt 1/3)
+
+
+
+
+ 75%|███████▌  | 3/4 [00:00<00:00,  5.53it/s][A[A[A[A
+
+
+
+100%|██████████| 4/4 [00:00<00:00,  5.57it/s][A[A[A[A
+
+
+
+                                             [A[A[A[A2026-10-14 14:27:27,364 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:30,782 [WARNING] Yahoo Finance rate limited, retrying in 4s (attempt 2/3)
+2026-10-14 14:27:31,092 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+
+
+
+                                      [A[A[A                                      
+                                      [A
+
+                                              [A[A2026-10-14 14:27:32,902 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:35,416 [WARNING] Yahoo Finance rate limited, retrying in 8s (attempt 3/3)
+2026-10-14 14:27:44,189 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:49,987 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:27:55,171 [WARNING] Polymarket search failed for 'China stimulus': HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /public-search?q=China+stimulus&limit_per_type=20 (Caused by ConnectTimeoutError(<HTTPSConnection(host='gamma-api.polymarket.com', port=443) at 0x1fe1c567390>, 'Connection to gamma-api.polymarket.com timed out. (connect timeout=30)'))
+2026-10-14 14:27:55,186 [WARNING] Polymarket search failed for 'US China trade tariff': HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /public-search?q=US+China+trade+tariff&limit_per_type=20 (Caused by ConnectTimeoutError(<HTTPSConnection(host='gamma-api.polymarket.com', port=443) at 0x1fe1c68bc50>, 'Connection to gamma-api.polymarket.com timed out. (connect timeout=30)'))
+2026-10-14 14:27:55,413 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:28:23,679 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:28:45,589 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:29:38,550 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:29:59,474 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:30:13,990 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:30:48,681 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:31:38,121 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-10-14 14:32:13,381 [INFO] HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+  ✅ 159158.SZ 预测完成: Hold
+  📄 报告: E:\Trade\TradingAgents\results\daily\159158.SZ_20261014_141259_737780_52c32115817745efb02353ece9f5320f.md
+  📊 摘要: E:\Trade\TradingAgents\results\daily\159158.SZ_20261014_141259_737780_52c32115817745efb02353ece9f5320f.json
+
+🎉 全部 3 只标的预测完成。
