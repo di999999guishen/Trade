@@ -49,6 +49,9 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+# pytest's basetemp when the suite is run as `--basetemp=./_pytest_tmp` (the
+# project convention), i.e. inside the repo rather than the system temp dir.
+_pytest_tmp/
 cover/
 
 # Translations

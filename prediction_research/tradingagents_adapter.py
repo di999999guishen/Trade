@@ -195,7 +195,12 @@ def build_plan(cfg: dict, top_n: int) -> dict:
                                "price", "quote_epoch", "change_pct", "amount", "market_cap", "main_net_inflow",
                                "main_net_inflow_pct", "super_large_net_inflow", "super_large_net_inflow_pct",
                                "large_net_inflow", "large_net_inflow_pct", "medium_net_inflow", "medium_net_inflow_pct",
-                               "small_net_inflow", "small_net_inflow_pct", "screen_components", "screen_contributions", "relative_strength_context")},
+                               "small_net_inflow", "small_net_inflow_pct", "screen_components", "screen_contributions", "relative_strength_context",
+                               # 可选人工注入的额外证据（如 Polymarket 预测市场上下文）。tradingagents/evidence_context.py
+                               # 的 render_screen_evidence 会把整份 evidence JSON 塞进 prompt 的 <screen_evidence> 块，
+                               # 因此这里放进去即可被 LLM 读到，无需给 main.py 加参数。冻结候选行未提供该字段时为 null，
+                               # 对其余标的无影响。
+                               "polymarket_context")},
                            "history_bars": history,
                            "history_bars_count": len(history),
                            "opportunity_observation": next((item for item in screen.get("opportunity_observation", {}).get("rows", [])

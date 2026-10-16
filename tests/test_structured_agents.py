@@ -212,6 +212,85 @@ def test_invoke_structured_falls_back_when_result_is_none():
 
 
 @pytest.mark.unit
+class TestStructuredOutputInstruction:
+    """A provider that cannot force ``tool_choice`` needs the demand in the prompt.
+
+    Measured on deepseek-v4-flash with a prose-shaped Research Manager prompt:
+    4/10 calls returned a tool call and 6/10 returned prose — the intermittent
+    "structured-output invocation failed" of the 2026-10-10 batch. With the
+    instruction appended the same prompt returned a tool call 10/10.
+    """
+
+    def test_the_prompt_is_told_the_tool_call_is_the_answer(self):
+        from tradingagents.agents.structured import (
+            STRUCTURED_OUTPUT_INSTRUCTION,
+            invoke_structured,
+        )
+
+        seen = []
+        structured = MagicMock()
+        structured.invoke.side_effect = lambda prompt: seen.append(prompt) or "PARSED"
+
+        assert invoke_structured(structured, "PROSE PROMPT", "t") == "PARSED"
+        assert seen == [f"PROSE PROMPT\n\n{STRUCTURED_OUTPUT_INSTRUCTION}"]
+
+    def test_a_message_list_prompt_gets_the_demand_as_a_final_turn(self):
+        from tradingagents.agents.structured import (
+            STRUCTURED_OUTPUT_INSTRUCTION,
+            invoke_structured,
+        )
+
+        messages = [{"role": "system", "content": "You are the Trader."}]
+        seen = []
+        structured = MagicMock()
+        structured.invoke.side_effect = lambda prompt: seen.append(prompt) or "PARSED"
+
+        assert invoke_structured(structured, messages, "t") == "PARSED"
+        assert seen == [[*messages, {"role": "user", "content": STRUCTURED_OUTPUT_INSTRUCTION}]]
+
+    def test_a_prose_answer_is_retried_once_before_giving_up(self):
+        from tradingagents.agents.structured import (
+            STRUCTURED_OUTPUT_INSTRUCTION,
+            invoke_structured,
+        )
+
+        structured = MagicMock()
+        structured.invoke.return_value = None
+
+        assert invoke_structured(structured, "PROSE PROMPT", "t") is None
+        assert structured.invoke.call_count == 2
+        for call in structured.invoke.call_args_list:
+            assert call.args[0] == f"PROSE PROMPT\n\n{STRUCTURED_OUTPUT_INSTRUCTION}"
+
+    def test_a_miss_then_a_hit_returns_the_parsed_result(self):
+        from tradingagents.agents.structured import invoke_structured
+
+        structured = MagicMock()
+        structured.invoke.side_effect = [None, "PARSED"]
+
+        assert invoke_structured(structured, "PROSE", "t") == "PARSED"
+
+    def test_the_free_text_fallback_keeps_the_prompt_without_the_tool_demand(self):
+        """The fallback is prose by design, so it must not carry the demand."""
+        from tradingagents.agents.structured import (
+            STRUCTURED_OUTPUT_INSTRUCTION,
+            invoke_structured_or_freetext,
+        )
+
+        structured = MagicMock()
+        structured.invoke.return_value = None
+        plain = MagicMock()
+        plain.invoke.return_value = MagicMock(content="FREETEXT")
+
+        out = invoke_structured_or_freetext(
+            structured, plain, "PROSE PROMPT", render=lambda r: r, agent_name="t"
+        )
+        assert out == "FREETEXT"
+        plain.invoke.assert_called_once_with("PROSE PROMPT")
+        assert STRUCTURED_OUTPUT_INSTRUCTION not in plain.invoke.call_args.args[0]
+
+
+@pytest.mark.unit
 class TestTraderAgent:
     def test_structured_path_produces_rendered_markdown(self):
         captured = {}

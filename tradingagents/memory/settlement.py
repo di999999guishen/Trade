@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 # A-share / HK suffixes served by the domestic Sina/Tencent loader (#CN).
 _CN_SUFFIXES = (".SS", ".SZ", ".BJ", ".HK")
 
+# Yahoo index symbol -> the name Sina's HK-index endpoint quotes it under.
+# Settlement's benchmark map names ``^HSI`` for HK books, and the US K-line
+# loader cannot read the ``^`` spelling, so it needs this endpoint of its own.
+_DOMESTIC_INDEX_ALIASES = {"^HSI": "HSI"}
+
 
 def resolve_benchmark(ticker: str, config: dict) -> str:
     """Pick the benchmark ticker for alpha calculation against ``ticker``.
@@ -54,13 +59,37 @@ def _by_day(closes):
     return closes
 
 
+def _window_series(df: pd.DataFrame, date_col: str, value_col: str,
+                   start_date: str, end_date: str) -> pd.Series:
+    """Slice ``df`` to ``[start_date, end_date)`` as a date-indexed close Series.
+
+    The single place both domestic loaders turn a frame into ``get_closes``'
+    shape, so they agree on the window, the ordering, and the date index.
+    """
+    if df is None or df.empty or date_col not in df.columns or value_col not in df.columns:
+        return pd.Series(dtype=float)
+    dates = pd.to_datetime(df[date_col])
+    window = df.assign(_d=dates)
+    window = window[(window["_d"] >= pd.Timestamp(start_date)) & (window["_d"] < pd.Timestamp(end_date))]
+    window = window.sort_values("_d")
+    if window.empty:
+        return pd.Series(dtype=float)
+    return pd.Series(
+        window[value_col].astype(float).to_numpy(),
+        index=pd.DatetimeIndex(window["_d"]),
+    )
+
+
 def _cn_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
-    """Daily closes for a CN symbol via the domestic Sina/Tencent loader (#CN).
+    """Daily closes for a CN or US-listed symbol via the domestic loader (#CN).
 
     yfinance cannot serve (or rate-limits) A-share / HK tickers, so settlement
-    of CN decisions would otherwise fail every pass. Returns a Series indexed by
-    bar date, ``get_closes``-compatible: closes from ``start_date`` up to, not
-    including, ``end_date``.
+    of CN decisions would otherwise fail every pass. The same loader also
+    carries US-listed tickers off Sina's US daily K-line (#CN-US), which is
+    what keeps SPY / QQQ / GLD — the US benchmarks — settleable. Returns a
+    Series indexed by bar date, ``get_closes``-compatible: closes from
+    ``start_date`` up to, not including, ``end_date``. Empty when no domestic
+    feed covers the symbol; the caller decides what that means.
     """
     from tradingagents.dataflows.akshare_data import load_ohlcv_akshare
 
@@ -73,25 +102,66 @@ def _cn_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
     except Exception as exc:  # noqa: BLE001 - surface as "no prices", caller retries
         logger.warning("Domestic closes unavailable for %s: %s", canonical, exc)
         return pd.Series(dtype=float)
-    if df is None or df.empty or "Close" not in df.columns or "Date" not in df.columns:
-        return pd.Series(dtype=float)
+    return _window_series(df, "Date", "Close", start_date, end_date)
 
-    dates = pd.to_datetime(df["Date"])
-    window = df.assign(_d=dates)
-    window = window[(window["_d"] >= pd.Timestamp(start_date)) & (window["_d"] < pd.Timestamp(end_date))]
-    window = window.sort_values("_d")
-    if window.empty:
+
+def _hk_index_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
+    """Hang Seng closes from akshare's Sina HK-index feed (#CN-HK).
+
+    The benchmark map names ``^HSI`` for HK books, so HK decisions stay
+    unsettleable without it. Sina quotes the index under its bare name ``HSI``
+    and the US K-line loader mis-parses the Yahoo ``^`` spelling outright, so
+    it needs its own endpoint rather than a branch inside ``_cn_closes``.
+    """
+    try:
+        import akshare as ak
+
+        df = ak.stock_hk_index_daily_sina(symbol=_DOMESTIC_INDEX_ALIASES[normalize_symbol(symbol).upper()])
+    except Exception as exc:  # noqa: BLE001 - surface as "no prices", caller retries
+        logger.warning("Domestic closes unavailable for %s: %s", symbol, exc)
         return pd.Series(dtype=float)
-    return pd.Series(
-        window["Close"].astype(float).to_numpy(),
-        index=pd.DatetimeIndex(window["_d"]),
-    )
+    return _window_series(df, "date", "close", start_date, end_date)
+
+
+def _has_foreign_suffix(symbol: str) -> bool:
+    """True for a dotted exchange suffix no domestic feed serves.
+
+    ``515220.SS`` (domestic) is False; ``7203.T`` and ``BRK.B`` are True. A
+    symbol with no dot at all (``SPY``, ``GC=F``) is not foreign here: the
+    domestic loader is given a chance first, then falls back.
+    """
+    head, dot, suffix = symbol.rpartition(".")
+    return bool(head and dot) and f".{suffix}" not in _CN_SUFFIXES
 
 
 def _closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
-    """Closes for ``symbol``: domestic loader for A-share/HK, else yfinance (#CN)."""
-    if normalize_symbol(symbol).upper().endswith(_CN_SUFFIXES):
-        return _cn_closes(symbol, start_date, end_date)
+    """Closes for ``symbol``, from a domestic feed whenever one covers it (#CN).
+
+    Settlement runs inside every analysis, so it must not be gated on a feed
+    that rate-limits: on 2026-10-10 Yahoo answered 429 for the US benchmarks
+    (SPY / QQQ / GLD) and every US and HK decision stayed pending, printing
+    "prices unavailable" once per holding window and injecting no lesson. The
+    domestic feeds reach everything the benchmark map names — A-share / HK
+    tickers and the Shanghai / Shenzhen indices through the Sina-Tencent
+    loader, US-listed tickers through Sina's US daily K-line, and the Hang Seng
+    through its own HK-index endpoint — so the common paths never touch Yahoo.
+
+    A foreign index (``^N225``, ``^FTSE``) or a foreign-exchange ticker
+    (``7203.T``) has no domestic feed and goes straight to yfinance, which is
+    also the fallback whenever a domestic feed comes back empty. A failure
+    there is still raised, for the caller to report.
+    """
+    canonical = normalize_symbol(symbol)
+    upper = canonical.upper()
+    if upper in _DOMESTIC_INDEX_ALIASES:
+        domestic = _hk_index_closes(canonical, start_date, end_date)
+    elif upper.startswith("^") or _has_foreign_suffix(upper):
+        # No domestic feed exists for an index or exchange outside CN/US (#CN).
+        domestic = pd.Series(dtype=float)
+    else:
+        domestic = _cn_closes(canonical, start_date, end_date)
+    if not domestic.empty:
+        return domestic
     return get_closes(symbol, start_date, end_date)
 
 

@@ -1298,3 +1298,81 @@ def test_a_run_does_not_wait_on_another_settlement_pass(tmp_path):
     worker.join()
 
     assert elapsed < 1 and result.settled == [] and result.failed == []
+
+
+@pytest.mark.unit
+class TestSettlementPriceSources:
+    """Settlement must not be gated on Yahoo for anything a domestic feed serves.
+
+    On 2026-10-10 Yahoo answered 429 for the US benchmarks (SPY / QQQ / GLD) and
+    every US and HK outcome stayed pending — "prices unavailable" once per
+    holding window, no lesson injected (#CN).
+    """
+
+    WINDOW = ("2026-01-01", "2026-01-10")
+
+    @staticmethod
+    def _stub(monkeypatch, asked, yahoo_seen):
+        def domestic(symbol, start_date, end_date):
+            asked.append(symbol)
+            return pd.Series([1.0], index=pd.DatetimeIndex(["2026-01-05"]))
+
+        def yahoo(symbol, start_date, end_date):
+            yahoo_seen.append(symbol)
+            return pd.Series([2.0], index=pd.DatetimeIndex(["2026-01-05"]))
+
+        monkeypatch.setattr(settlement, "_cn_closes", domestic)
+        monkeypatch.setattr(settlement, "_hk_index_closes", domestic)
+        monkeypatch.setattr(settlement, "get_closes", yahoo)
+
+    def test_us_benchmarks_and_cn_tickers_never_reach_yahoo(self, monkeypatch):
+        asked, yahoo_seen = [], []
+        self._stub(monkeypatch, asked, yahoo_seen)
+
+        for symbol in ("SPY", "QQQ", "GLD", "NVDA", "600519.SS", "3032.HK"):
+            assert not settlement._closes(symbol, *self.WINDOW).empty
+
+        assert asked == ["SPY", "QQQ", "GLD", "NVDA", "600519.SS", "3032.HK"]
+        assert yahoo_seen == []
+
+    def test_the_hang_seng_benchmark_goes_to_its_own_domestic_endpoint(self, monkeypatch):
+        """`^HSI` is named by the benchmark map for HK books, so it must settle."""
+        asked, yahoo_seen = [], []
+        self._stub(monkeypatch, asked, yahoo_seen)
+
+        assert not settlement._closes("^HSI", *self.WINDOW).empty
+        assert asked == ["^HSI"] and yahoo_seen == []
+
+    def test_a_symbol_no_domestic_feed_serves_falls_back_to_yahoo(self, monkeypatch):
+        """A foreign index (`^N225`) and a foreign venue (`7203.T`) have no
+        domestic feed, so Yahoo stays their route."""
+        asked, yahoo_seen = [], []
+        self._stub(monkeypatch, asked, yahoo_seen)
+
+        for symbol in ("^N225", "7203.T"):
+            assert not settlement._closes(symbol, *self.WINDOW).empty
+
+        assert yahoo_seen == ["^N225", "7203.T"]
+        # Neither is offered to a domestic loader that cannot serve it.
+        assert asked == []
+
+    def test_an_unsuffixed_symbol_is_offered_domestically_first(self, monkeypatch):
+        """`BTC-USD` carries no exchange suffix, so the domestic loader — which
+        also reaches Sina's US tape — gets first refusal; only an empty answer
+        would fall through to Yahoo."""
+        asked, yahoo_seen = [], []
+        self._stub(monkeypatch, asked, yahoo_seen)
+
+        assert not settlement._closes("BTC-USD", *self.WINDOW).empty
+
+        assert asked == ["BTC-USD"] and yahoo_seen == []
+
+    def test_an_empty_domestic_answer_falls_through_rather_than_reading_as_no_data(self, monkeypatch):
+        """A blank domestic series must not be mistaken for "no prices" (#1169)."""
+        monkeypatch.setattr(settlement, "_cn_closes", lambda *a, **k: pd.Series(dtype=float))
+        monkeypatch.setattr(
+            settlement, "get_closes",
+            lambda symbol, start_date, end_date: pd.Series([3.0], index=pd.DatetimeIndex(["2026-01-05"])),
+        )
+
+        assert list(settlement._closes("NVDA", *self.WINDOW)) == [3.0]

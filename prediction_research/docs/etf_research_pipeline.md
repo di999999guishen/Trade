@@ -17,23 +17,24 @@
 
 | 时间 | 自动化 ID | 命令 | 职责 |
 |---|---|---|---|
-| **18:00** | `b459af1e-2d1b-4185-93f0-7cef48bd8e3c` | `run_research.py backfill` | 历史日线回填与结算（ENUM→REFRESH→SETTLE，约 12–14 分钟）。清空待回填清单，为当晚 cycle 备好数据。 |
-| **19:00** | `automation-1784594402282` | `daily_predict.py` | 510050 / 515220 + SPY / QQQ / GLD 每日盘前预测（含 Polymarket 快照）。 |
-| **20:00** | `7100f2bb-5876-4ad5-8fdf-aaadaa88a0fd` | `run_research.py cycle --top 10` → **`run_research.py run-agents --top 10`** | 全市场定量筛选 + 概率 + 质量门 + 冻结结算 → **AI agent 多智能体辩论（强制）** → 研究报告。 |
+| **23:00** | `b459af1e-2d1b-4185-93f0-7cef48bd8e3c` | `run_research.py backfill` | 历史日线回填与结算（ENUM→REFRESH→SETTLE，约 12–14 分钟）。清空待回填清单，为当晚 cycle 备好数据。 |
+| **23:20** | `automation-1784594402282` | `daily_predict.py` | 510050 / 515220 + SPY / QQQ / GLD 每日盘前预测（含 Polymarket 快照）。 |
+| **23:40** | `7100f2bb-5876-4ad5-8fdf-aaadaa88a0fd` | `run_research.py cycle --top 10` → **`run_research.py run-agents --top 10`** | 全市场定量筛选 + 概率 + 质量门 + 冻结结算 → **AI agent 多智能体辩论（强制）** → 研究报告。 |
 
 - 三条自动化**各有独立记忆目录**，执行前先 `automation_update list` 确认当次是哪条。
-- ⭐ **运行时段约定（2026-10-07 定）**：三条**只在 18:00–次日 09:00** 跑（DeepSeek 官方 API off-peak 半价窗，避开北京时间 09:00-12:00 / 14:00-18:00 峰段）。为此整链由原 16:00/18:00/19:00 **整体后移 1 小时**到 18:00/19:00/20:00（只挪一条会破 backfill→cycle 的先后序）。**禁止**把任何一条挪回 18:00 之前。
-- ⭐ **模型档位**：三条统一为用户的**自有** DeepSeek V4.1 Flash 官方直连，平台 `model_id = custom-local:deepseek-flash`（⚠️ **不是** 旧的 `custom-local:deepseek-v4-flash`——`models.json` 该条已于 2026-10-06 更名，旧 id 平台无法解析、会静默失败）。**不要改回平台 Hy4 档。**
+- ⭐ **运行时段约定（2026-10-12 用户指令改，取代 2026-10-07 的 DeepSeek 低峰窗口径）**：三条**只在 23:00–06:00 夜间窗口**跑，调度为 23:00 / 23:20 / 23:40（由原 18:00/19:00/20:00 整链后移；只挪一条会破 backfill→cycle 先后序并争抢 state store）。**禁止**把任何一条挪回 23:00 之前或挪出 06:00 之后。
+- ⭐ **会话模型档位（2026-10-12 用户指令，两阶段）**：**2026-10-25 及之前** `step-5-preview`；**2026-10-26 起** `hy4-preview`（由 10-26 00:05 一次性「模型切换值班」自动化 `07064d4d-1d3d-4ca8-afb2-7b5b1364eff4` 切换，届时以 `automation_update` 回读为准）。⚠️ hy4 夜间免费促销（23:00–08:00）平台配置有效期至 **2026-10-31**，11 月起需重新评估（备选 `custom-local:deepseek-flash` 自有档）。
+- ⚠️ **会话模型 ≠ 项目内部 LLM**：run-agents 的多智能体辩论 LLM 仍以项目 `.env` 的 `TRADINGAGENTS_DEEP_THINK_LLM` / `TRADINGAGENTS_QUICK_THINK_LLM` 为唯一开关（当前 `deepseek-v4-flash`），**不受**上面会话模型切换影响。
 - 待抓集合 = `pending_history_assets()` + `_flow_screen_backlog()` 并集；backfill **必须做结算**，只刷新不结算则下轮重抓。
 - **`pending_before` 上百属正常**（全 `waiting_for_horizon`），可直接进 cycle；**禁止带真实积压跑 cycle**。
 
 ---
 
-## 2. 主流程步骤（20:00 自动化）
+## 2. 主流程步骤（23:40 自动化）
 
 ### 步骤 0 — 前置回填复查（关键，决定窗口内能否跑完）
 - 先跑 `run_research.py backfill` 复查：若 `pending_before` 很小（个位数）或为 0 ⇒ 前置就绪，继续；若仍有上百只 ⇒ **先把 backfill 跑完再进 cycle**，绝不带积压跑 cycle（否则拖到数小时、当晚出不了报告）。
-- 18:00 盘后自动化已独立完成回填时，本步通常直接就绪。
+- 23:00 盘后自动化已独立完成回填时，本步通常直接就绪。
 
 ### 步骤 1 — 判交易日（必须先做）
 ```

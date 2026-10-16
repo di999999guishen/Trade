@@ -73,6 +73,28 @@ def prompts():
     return prompts_module
 
 
+@pytest.fixture(autouse=True)
+def _confine_env_writes_to_the_test_directory(monkeypatch, prompts):
+    """Stop a key-write from ever reaching the repository's own `.env`.
+
+    ``ensure_api_key`` targets ``find_dotenv(usecwd=True)``, which walks *up*
+    from the current directory. ``run_tests.py`` parks the basetemp under
+    ``./_pytest_tmp``, inside the repository, so the tmp directory of every
+    ``tmp_path`` test lives under the repo root: an unpatched call resolves the
+    repo's real ``.env`` and overwrites the live ``DEEPSEEK_API_KEY`` with
+    whatever stub the test pasted, silently breaking the next pipeline run
+    (observed 2026-10-11: the live key was replaced by ``sk-deepseek-test``).
+    Pinning ``find_dotenv`` to nothing leaves ``Path.cwd() / ".env"`` as the only
+    target, i.e. the calling test's own ``tmp_path``.
+    """
+    monkeypatch.setattr(prompts, "find_dotenv", lambda **kwargs: "")
+
+
+def test_the_fixture_keeps_key_writes_out_of_the_repository(prompts):
+    """Guard for the fixture above: dropping the pin would clobber the live `.env`."""
+    assert prompts.find_dotenv(usecwd=True) == ""
+
+
 def test_ensure_api_key_returns_existing(monkeypatch, prompts):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-already-set")
     result = prompts.ensure_api_key("openai")

@@ -39,6 +39,15 @@ _SUFFIX_MARKET = {
     ".BJ": "bj",
 }
 
+# Global indices served by domestic vendors (akshare -> Sina global index
+# history). normalize_symbol() resolves broker aliases (JP225/JPN225) to the
+# Yahoo-style caret symbol; this table maps that canonical form to the market
+# branch and the akshare Chinese name used by index_global_hist_sina.
+# Extend by adding rows — no call site changes required.
+_GLOBAL_INDEX_MARKET = {
+    "^N225": ("N225", "jp"),
+}
+
 # Common headers for financial APIs
 _API_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -47,8 +56,15 @@ _API_HEADERS = {
 
 
 def _parse_symbol(symbol: str) -> tuple[str, str]:
-    """Split a symbol like '300750.SZ' into ('300750', 'sz')."""
+    """Split a symbol like '300750.SZ' into ('300750', 'sz').
+
+    Global indices (e.g. '^N225' from the JP225/JPN225 aliases) resolve via
+    _GLOBAL_INDEX_MARKET before the suffix table, because their canonical
+    form carries no exchange suffix.
+    """
     upper = symbol.strip().upper()
+    if upper in _GLOBAL_INDEX_MARKET:
+        return _GLOBAL_INDEX_MARKET[upper]
     for suffix, market in _SUFFIX_MARKET.items():
         if upper.endswith(suffix):
             return upper[: -len(suffix)], market
@@ -269,12 +285,62 @@ def _fetch_us_sina(symbol: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ── Global indices (akshare -> Sina) ─────────────────────────────────────────
+
+# akshare's index_global_hist_sina keys on the Chinese index name, not the
+# caret symbol. Keyed by the market code from _parse_symbol.
+_GLOBAL_INDEX_AKSHARE_NAME = {
+    "jp": "日经225指数",
+}
+
+
+def _fetch_jp_sina(symbol: str) -> pd.DataFrame:
+    """Fetch Nikkei 225 daily K-line via akshare (Sina global index history).
+
+    Replaces yfinance's ^N225 route — Yahoo is rate-limited from this network
+    and outside the domestic-only source policy. akshare returns ALL history
+    (~1000 rows) with lowercase columns; normalize to the shared OHLCV schema.
+    Volume is whatever Sina reports (0 on the current session until it
+    settles) — kept as-is, never estimated.
+    """
+    import akshare as ak
+
+    name = _GLOBAL_INDEX_AKSHARE_NAME.get("jp")
+    try:
+        raw = ak.index_global_hist_sina(symbol=name)
+    except Exception as exc:
+        raise NoMarketDataError(symbol, None, f"akshare global index error: {exc}")
+
+    if raw is None or raw.empty:
+        raise NoMarketDataError(symbol, None, f"no data returned for {name}")
+
+    rows = []
+    for _, item in raw.iterrows():
+        try:
+            rows.append({
+                "Date": str(item["date"])[:10],
+                "Open": float(item["open"]),
+                "High": float(item["high"]),
+                "Low": float(item["low"]),
+                "Close": float(item["close"]),
+                "Volume": float(item.get("volume", 0) or 0),
+            })
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    if not rows:
+        raise NoMarketDataError(symbol, None, f"{name} returned no valid rows")
+
+    return pd.DataFrame(rows)
+
+
 # ── Unified OHLCV loader ─────────────────────────────────────────────────────
 
 def load_ohlcv_akshare(symbol: str, curr_date: str) -> pd.DataFrame:
-    """Fetch OHLCV data using Sina (A-shares/US) / Tencent (HK) with caching.
+    """Fetch OHLCV data using Sina (A-shares/US) / Tencent (HK) / akshare (global indices) with caching.
 
-    Supports: A-shares (.SZ/.SS/.BJ), HK (.HK), US (no suffix like MSFT/AAPL).
+    Supports: A-shares (.SZ/.SS/.BJ), HK (.HK), US (no suffix like MSFT/AAPL),
+    global indices (JP225 -> ^N225, via akshare's Sina global index history).
     """
     canonical = normalize_symbol(symbol)
     safe_symbol = safe_ticker_component(canonical)
@@ -309,6 +375,8 @@ def load_ohlcv_akshare(symbol: str, curr_date: str) -> pd.DataFrame:
             downloaded = _fetch_ashare_sina(code, market)
         elif market == "hk":
             downloaded = _fetch_hk_tencent(code)
+        elif market == "jp":
+            downloaded = _fetch_jp_sina(canonical)
         elif market == "us":
             downloaded = _fetch_us_sina(code)
         else:
@@ -344,6 +412,8 @@ def get_akshare_data_online(
         df = _fetch_ashare_sina(code, market)
     elif market == "hk":
         df = _fetch_hk_tencent(code)
+    elif market == "jp":
+        df = _fetch_jp_sina(canonical)
     elif market == "us":
         df = _fetch_us_sina(code)
     else:
@@ -366,7 +436,8 @@ def get_akshare_data_online(
 
     csv_string = df.to_csv(index=False)
     label = canonical if canonical == symbol.upper() else f"{canonical} (from {symbol})"
-    api_name = "新浪财经" if market in ("sz", "sh", "bj", "us") else "腾讯财经(HK)"
+    api_name = "akshare/新浪全球指数" if market == "jp" else (
+        "新浪财经" if market in ("sz", "sh", "bj", "us") else "腾讯财经(HK)")
     header = f"# Stock data for {label} (via {api_name}) from {start_date} to {end_date}\n"
     header += f"# Total records: {len(df)}\n"
     header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
