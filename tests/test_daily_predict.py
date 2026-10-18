@@ -18,10 +18,12 @@ def snapshot(ticker):
 
 
 @pytest.mark.parametrize("configured, expected", [
-    (None, ["510050.SS", "515220.SS", "SPY", "QQQ", "GLD"]),
-    ("", ["SPY", "QQQ", "GLD"]),
+    (None, ["510050.SS", "515220.SS", "GLD"]),
+    ("", ["GLD"]),
+    # SPY/QQQ are no longer mandatory, but an explicit DAILY_TICKER holdings
+    # list may still name them; only the GLD mandatory entry is added.
     ("spy, QQQ,spy, gld", ["SPY", "QQQ", "GLD"]),
-    ("NVDA, 510050.ss,,", ["NVDA", "510050.SS", "SPY", "QQQ", "GLD"]),
+    ("NVDA, 510050.ss,,", ["NVDA", "510050.SS", "GLD"]),
 ])
 def test_holdings_cannot_remove_mandatory_tickers(configured, expected):
     assert daily.build_daily_tickers(configured) == expected
@@ -31,18 +33,17 @@ def test_per_ticker_sources_and_evidence_do_not_leak():
     base = daily.build_config()
     base["screen_evidence_context"] = "existing context\n"
     original = deepcopy(base)
-    spy = daily.build_ticker_config(base, "SPY", snapshot("SPY"))
-    qqq = daily.build_ticker_config(base, "QQQ", snapshot("QQQ"))
-    holding = daily.build_ticker_config(base, "510050.SS", None)
-    assert spy["data_vendors"]["core_stock_apis"] == "akshare"
-    assert spy["data_vendors"]["fundamental_data"] == "yfinance"
-    assert spy["tool_vendors"]["get_news"] == "yfinance,eastmoney"
+    gld = daily.build_ticker_config(base, "GLD", snapshot("GLD"))
+    holding = daily.build_ticker_config(base, "510050.SS", snapshot("510050.SS"))
+    assert gld["data_vendors"]["core_stock_apis"] == "akshare"
+    assert gld["data_vendors"]["fundamental_data"] == "yfinance"
+    assert gld["tool_vendors"]["get_news"] == "yfinance,eastmoney"
     assert holding["data_vendors"]["fundamental_data"] == "eastmoney"
     assert holding.get("tool_vendors", {}).get("get_news") != "yfinance,eastmoney"
-    assert spy["screen_evidence_context"].startswith("existing context\n")
-    assert "## SPY Polymarket" in spy["screen_evidence_context"]
-    assert "## QQQ Polymarket" in qqq["screen_evidence_context"]
-    assert "## SPY Polymarket" not in qqq["screen_evidence_context"]
+    assert gld["screen_evidence_context"].startswith("existing context\n")
+    assert "## GLD Polymarket" in gld["screen_evidence_context"]
+    assert "## 510050.SS Polymarket" in holding["screen_evidence_context"]
+    assert "## GLD Polymarket" not in holding["screen_evidence_context"]
     assert base == original
 
 
@@ -60,7 +61,7 @@ def test_runner_attempts_every_ticker_and_freezes_evidence_once(tmp_path, monkey
             captured.append((ticker, deepcopy(self.config)))
             if ticker == "510050.SS":
                 raise ValueError("holding failure")
-            if ticker == "SPY" and calls.count(ticker) == 1:
+            if ticker == "GLD" and calls.count(ticker) == 1:
                 raise ConnectionError("temporary connection failure")
             return {"news_report": "offline result"}, "Hold"
 
@@ -68,10 +69,10 @@ def test_runner_attempts_every_ticker_and_freezes_evidence_once(tmp_path, monkey
         ["510050.SS"], "2026-09-26", datetime(2026, 9, 26, 11), daily.build_config(),
         tmp_path, graph_factory=Graph, snapshot_loader=loader)
     assert failed == ["510050.SS"]
-    assert calls == ["510050.SS", "SPY", "SPY", "QQQ", "GLD"]
-    assert [call.args[0] for call in loader.call_args_list] == ["SPY", "QQQ", "GLD"]
-    spy_configs = [cfg for ticker, cfg in captured if ticker == "SPY"]
-    assert spy_configs[0]["screen_evidence_context"] == spy_configs[1]["screen_evidence_context"]
+    assert calls == ["510050.SS", "GLD", "GLD"]
+    assert [call.args[0] for call in loader.call_args_list] == ["GLD"]
+    gld_configs = [cfg for ticker, cfg in captured if ticker == "GLD"]
+    assert gld_configs[0]["screen_evidence_context"] == gld_configs[1]["screen_evidence_context"]
     for ticker in daily.MANDATORY_DAILY_TICKERS:
         evidence = list(tmp_path.glob(f"{ticker}_*_polymarket.json"))
         assert len(evidence) == 1
@@ -85,12 +86,12 @@ def test_runner_attempts_every_ticker_and_freezes_evidence_once(tmp_path, monkey
         assert "no_matches" in report
 
 
-def test_shared_vendor_registry_resets_news_for_holding_after_spy(monkeypatch):
+def test_shared_vendor_registry_resets_news_for_holding_after_mandatory(monkeypatch):
     from tradingagents.dataflows import config as vendor_config
 
     monkeypatch.setattr(vendor_config, "_config", None)
     base = daily.build_config()
-    vendor_config.set_config(daily.build_ticker_config(base, "SPY", snapshot("SPY")))
+    vendor_config.set_config(daily.build_ticker_config(base, "GLD", snapshot("GLD")))
     assert vendor_config.get_config()["tool_vendors"]["get_news"] == "yfinance,eastmoney"
     vendor_config.set_config(daily.build_ticker_config(base, "510050.SS", None))
     actual = vendor_config.get_config()
@@ -115,12 +116,12 @@ def test_polymarket_failure_does_not_skip_required_analysis(tmp_path):
         graph_factory=Graph, snapshot_loader=loader)
     assert failed == []
     assert calls == list(daily.MANDATORY_DAILY_TICKERS)
-    assert loader.call_count == 3
+    assert loader.call_count == len(daily.MANDATORY_DAILY_TICKERS)
     for path in tmp_path.glob("*_polymarket.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["status"] == "unavailable"
 
 
-def test_invalid_holding_and_failed_spy_do_not_block_qqq_or_gold(tmp_path):
+def test_invalid_holding_does_not_block_mandatory_and_failure_is_logged(tmp_path):
     calls = []
 
     class Graph:
@@ -129,17 +130,18 @@ def test_invalid_holding_and_failed_spy_do_not_block_qqq_or_gold(tmp_path):
 
         def propagate(self, ticker, analysis_date):
             calls.append(ticker)
-            if ticker == "SPY":
+            if ticker == "GLD":
                 raise ValueError("injected permanent error")
             return {}, "Hold"
 
     failed = daily.run_daily_predictions(
         ["../invalid"], "2026-09-26", datetime(2026, 9, 26, 11), daily.build_config(),
         tmp_path, graph_factory=Graph, snapshot_loader=snapshot)
-    assert failed == ["../INVALID", "SPY"]
-    assert calls == ["SPY", "QQQ", "GLD"]
-    assert len(list(tmp_path.glob("SPY_*_polymarket.json"))) == 1
-    assert len(list(tmp_path.glob("error_SPY_*.log"))) == 1
+    # The invalid holding is rejected, yet the mandatory instrument still runs.
+    assert failed == ["../INVALID", "GLD"]
+    assert calls == ["GLD"]
+    assert len(list(tmp_path.glob("GLD_*_polymarket.json"))) == 1
+    assert len(list(tmp_path.glob("error_GLD_*.log"))) == 1
 
 
 def test_graph_receives_daily_evidence_and_checkpoint_signature_changes():
@@ -188,12 +190,23 @@ def test_sina_us_cache_hit_never_calls_network(tmp_path, monkeypatch):
     fetch.assert_not_called()
 
 
-def test_dry_run_lists_all_instruments_without_analysis(monkeypatch, capsys):
-    monkeypatch.setenv("DAILY_TICKER", "NVDA")
+@pytest.mark.parametrize("configured, expected", [
+    (None, ["510050.SS", "515220.SS", "GLD"]),
+    ("NVDA", ["NVDA", "GLD"]),
+])
+def test_dry_run_lists_all_instruments_without_analysis(
+        monkeypatch, capsys, configured, expected):
+    if configured is None:
+        monkeypatch.delenv("DAILY_TICKER", raising=False)
+    else:
+        monkeypatch.setenv("DAILY_TICKER", configured)
+    # Keep the run offline and deterministic even if the caller exported them.
+    monkeypatch.delenv("TRADINGAGENTS_CANDIDATES", raising=False)
+    monkeypatch.delenv("TRADINGAGENTS_SCREEN_TOP_N", raising=False)
     monkeypatch.setattr(daily, "run_daily_predictions", Mock(side_effect=AssertionError("dry run")))
     assert daily.main(["--dry-run"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["tickers"] == ["NVDA", "SPY", "QQQ", "GLD"]
+    assert payload["tickers"] == expected
 
 
 def test_live_market_payload_reaches_analysis_and_saved_report(tmp_path, monkeypatch):
@@ -228,7 +241,8 @@ def test_live_market_payload_reaches_analysis_and_saved_report(tmp_path, monkeyp
         [], "2026-09-26", datetime(2026, 9, 26, 20), daily.build_config(), tmp_path,
         graph_factory=Graph, snapshot_loader=loader)
     assert not failed
-    assert request.call_count == 6
+    # Two Gamma searches per ticker ("gold" and "GLD" for the only mandatory one).
+    assert request.call_count == 2 * len(daily.MANDATORY_DAILY_TICKERS)
     for ticker in daily.MANDATORY_DAILY_TICKERS:
         assert f"Will {ticker} close higher?" in contexts[ticker]
         assert "Up 63.00%; Down 37.00%" in contexts[ticker]

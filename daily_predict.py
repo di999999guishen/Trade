@@ -34,14 +34,100 @@ INITIAL_DELAY = 10
 logger = logging.getLogger(__name__)
 
 
-def build_daily_tickers(configured: str | None = None) -> list[str]:
-    """DAILY_TICKER changes holdings, never removes the mandatory daily instrument (GLD)."""
-    holdings = DEFAULT_HOLDINGS if configured is None else configured.split(",")
-    return list(dict.fromkeys(
-        ticker.strip().upper()
-        for ticker in (*holdings, *MANDATORY_DAILY_TICKERS)
-        if ticker.strip()
-    ))
+def build_daily_tickers(configured: str | None = None,
+                        candidates: list[str] | None = None) -> list[str]:
+    """DAILY_TICKER changes holdings, never removes the mandatory daily instrument (GLD).
+
+    ``candidates`` is opt-in: existing callers pass only ``configured`` and keep
+    the exact pre-screening behavior. When ``TRADINGAGENTS_SCREEN_TOP_N`` is a
+    positive integer, up to that many screened names are added; holdings and
+    mandatory instruments always stay and never consume a screening slot.
+    """
+    holdings_source = DEFAULT_HOLDINGS if configured is None else configured.split(",")
+    holdings = [
+        ticker.strip().upper() for ticker in holdings_source if ticker.strip()
+    ]
+    base = list(dict.fromkeys([*holdings, *MANDATORY_DAILY_TICKERS]))
+
+    raw_top_n = os.getenv("TRADINGAGENTS_SCREEN_TOP_N", "").strip()
+    if not raw_top_n or candidates is None:
+        return base
+    try:
+        top_n = int(raw_top_n)
+    except ValueError:
+        logger.warning("忽略非法的 TRADINGAGENTS_SCREEN_TOP_N=%r", raw_top_n)
+        return base
+    if top_n <= 0:
+        return base
+
+    from tradingagents.factors import prefilter
+
+    base_set = set(base)
+    pool = [
+        ticker for ticker in dict.fromkeys(
+            str(item).strip().upper() for item in candidates if str(item).strip()
+        ) if ticker not in base_set
+    ]
+    if not pool:
+        return base
+
+    ranked = None
+    try:
+        ranked = prefilter.rank_candidates(pool, build_config())
+        selected = _choose_from_ranking(prefilter, base, ranked, top_n)
+    except Exception as exc:  # noqa: BLE001 - conservative fallback
+        logger.debug("screening failed, keeping every candidate: %s", exc)
+        selected = list(dict.fromkeys([*base, *pool]))
+    try:
+        _report_prefilter(ranked, selected)
+    except Exception as exc:  # noqa: BLE001 - logging must never change the result
+        logger.debug("prefilter report failed: %s", exc)
+    return selected
+
+
+def _choose_from_ranking(prefilter, base: list[str], ranked: list[tuple],
+                         top_n: int) -> list[str]:
+    """Mirror ``prefilter.select_tickers`` once the ranking is already computed.
+
+    Keeping the choice here lets the one ranking pass feed both the report and
+    the selection, so an opted-in screen never fetches every candidate twice.
+    """
+    if any(score == prefilter.UNRANKED_SCORE for _, score, _ in ranked):
+        # Never let a fetch failure shrink the universe; only an explicit
+        # premium veto is allowed to remove a name.
+        kept = [ticker for ticker, score, _ in ranked
+                if score != prefilter.UNSELECTABLE_SCORE]
+        return list(dict.fromkeys([*base, *kept]))
+    chosen = [ticker for ticker, score, _ in ranked
+              if score > prefilter.UNSELECTABLE_SCORE][:top_n]
+    return list(dict.fromkeys([*base, *chosen]))
+
+
+def _report_prefilter(ranked: list[tuple] | None, selected: list[str]) -> None:
+    """One line per ranked candidate, then the retained set."""
+    for ticker, score, reason in ranked or ():
+        print(f"[prefilter] {ticker} score={score:.2f} {reason}", flush=True)
+    print(f"[prefilter] 已选: {', '.join(selected)}（保留持仓 + 前 N 名）", flush=True)
+
+
+def _env_int(name: str, default: int) -> int:
+    """Integer env override; absent or unparsable values keep the old default."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.warning("忽略非法的 %s=%r，使用默认值 %d", name, raw, default)
+        return default
+
+
+def _candidates_from_env() -> list[str] | None:
+    """Comma-separated extra candidates; holdings and mandatory are never screened."""
+    raw = os.getenv("TRADINGAGENTS_CANDIDATES", "").strip()
+    if not raw:
+        return None
+    return [t.strip().upper() for t in raw.split(",") if t.strip()]
 
 
 def build_config() -> dict:
@@ -53,8 +139,8 @@ def build_config() -> dict:
         "deep_think_llm": os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-flash"),
         "quick_think_llm": os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "deepseek-v4-flash"),
         "output_language": "Chinese",
-        "max_debate_rounds": 1,
-        "max_risk_discuss_rounds": 1,
+        "max_debate_rounds": _env_int("TRADINGAGENTS_MAX_DEBATE_ROUNDS", 1),
+        "max_risk_discuss_rounds": _env_int("TRADINGAGENTS_MAX_RISK_ROUNDS", 1),
     })
     # The akshare adapter already serves US OHLCV/indicators through Sina.
     # Yahoo answers 429 for GLD, which the snapshot path would report as
@@ -154,48 +240,62 @@ def run_daily_predictions(tickers, analysis_date, run_time, base_config, results
     tickers = build_daily_tickers(",".join(tickers))
     failed = []
     for index, ticker in enumerate(tickers, 1):
-        print(f"\n[{index}/{len(tickers)}] 开始分析 {ticker} ...")
-        snapshot = None
+        previous_run_id = os.environ.get("TRADINGAGENTS_RUN_ID")
+        previous_ticker = os.environ.get("TRADINGAGENTS_TICKER")
+        os.environ["TRADINGAGENTS_RUN_ID"] = run_id
+        os.environ["TRADINGAGENTS_TICKER"] = ticker
         try:
-            safe_ticker = safe_ticker_component(ticker)
-        except ValueError as exc:
-            failed.append(ticker)
-            logger.error("Invalid daily ticker: %s", exc)
-            continue
-        try:
-            if ticker in MANDATORY_DAILY_TICKERS:
-                try:
-                    snapshot = snapshot_loader(ticker)
-                except Exception as exc:
-                    logger.warning("[%s] Polymarket unavailable: %s", ticker, type(exc).__name__)
-                    snapshot = {
-                        "schema_version": 1, "ticker": ticker, "status": "unavailable",
-                        "fetched_at": datetime.now(timezone.utc).isoformat(),
-                        "queries": [], "markets": [], "error": type(exc).__name__,
-                    }
-                snapshot = {**snapshot, "analysis_date": analysis_date}
-                # Keep evidence even if the subsequent LLM analysis fails.
-                snapshot_file = results_dir / f"{safe_ticker}_{run_id}_polymarket.json"
-                with snapshot_file.open("x", encoding="utf-8") as handle:
-                    json.dump(snapshot, handle, ensure_ascii=False, indent=2, allow_nan=False)
-                print(f"  Polymarket: {snapshot['status']}，{len(snapshot['markets'])} 个相关市场")
+            print(f"\n[{index}/{len(tickers)}] 开始分析 {ticker} ...")
+            snapshot = None
+            try:
+                safe_ticker = safe_ticker_component(ticker)
+            except ValueError as exc:
+                failed.append(ticker)
+                logger.error("Invalid daily ticker: %s", exc)
+                continue
+            try:
+                if ticker in MANDATORY_DAILY_TICKERS:
+                    try:
+                        snapshot = snapshot_loader(ticker)
+                    except Exception as exc:
+                        logger.warning("[%s] Polymarket unavailable: %s", ticker, type(exc).__name__)
+                        snapshot = {
+                            "schema_version": 1, "ticker": ticker, "status": "unavailable",
+                            "fetched_at": datetime.now(timezone.utc).isoformat(),
+                            "queries": [], "markets": [], "error": type(exc).__name__,
+                        }
+                    snapshot = {**snapshot, "analysis_date": analysis_date}
+                    # Keep evidence even if the subsequent LLM analysis fails.
+                    snapshot_file = results_dir / f"{safe_ticker}_{run_id}_polymarket.json"
+                    with snapshot_file.open("x", encoding="utf-8") as handle:
+                        json.dump(snapshot, handle, ensure_ascii=False, indent=2, allow_nan=False)
+                    print(f"  Polymarket: {snapshot['status']}，{len(snapshot['markets'])} 个相关市场")
 
-            config = build_ticker_config(base_config, ticker, snapshot, news_flow_context)
-            result, decision = run_prediction_with_retry(
-                ticker, analysis_date, config, graph_factory=graph_factory)
-            if snapshot is not None:
-                result = {**result, "prediction_market_snapshot": snapshot}
-            report, summary = save_daily_result(
-                results_dir, safe_ticker, run_id, run_time, analysis_date, result, decision)
-            print(f"  ✅ {ticker} 预测完成: {decision}\n  📄 报告: {report}\n  📊 摘要: {summary}")
-        except Exception as exc:
-            failed.append(ticker)
-            error_file = results_dir / f"error_{safe_ticker}_{run_id}.log"
-            error_file.write_text(
-                f"Error at {datetime.now().isoformat()}:\n{type(exc).__name__}: {exc}\n",
-                encoding="utf-8",
-            )
-            print(f"  ❌ {ticker} 运行失败: {type(exc).__name__}: {exc}\n  错误日志: {error_file}")
+                config = build_ticker_config(base_config, ticker, snapshot, news_flow_context)
+                result, decision = run_prediction_with_retry(
+                    ticker, analysis_date, config, graph_factory=graph_factory)
+                if snapshot is not None:
+                    result = {**result, "prediction_market_snapshot": snapshot}
+                report, summary = save_daily_result(
+                    results_dir, safe_ticker, run_id, run_time, analysis_date, result, decision)
+                print(f"  ✅ {ticker} 预测完成: {decision}\n  📄 报告: {report}\n  📊 摘要: {summary}")
+            except Exception as exc:
+                failed.append(ticker)
+                error_file = results_dir / f"error_{safe_ticker}_{run_id}.log"
+                error_file.write_text(
+                    f"Error at {datetime.now().isoformat()}:\n{type(exc).__name__}: {exc}\n",
+                    encoding="utf-8",
+                )
+                print(f"  ❌ {ticker} 运行失败: {type(exc).__name__}: {exc}\n  错误日志: {error_file}")
+        finally:
+            if previous_run_id is None:
+                os.environ.pop("TRADINGAGENTS_RUN_ID", None)
+            else:
+                os.environ["TRADINGAGENTS_RUN_ID"] = previous_run_id
+            if previous_ticker is None:
+                os.environ.pop("TRADINGAGENTS_TICKER", None)
+            else:
+                os.environ["TRADINGAGENTS_TICKER"] = previous_ticker
     return failed
 
 
@@ -207,7 +307,7 @@ def main(argv=None) -> int:
     from dotenv import load_dotenv
 
     load_dotenv(PROJECT_DIR / ".env")
-    tickers = build_daily_tickers(os.getenv("DAILY_TICKER"))
+    tickers = build_daily_tickers(os.getenv("DAILY_TICKER"), _candidates_from_env())
     if args.dry_run:
         print(json.dumps({"tickers": tickers, "mandatory": MANDATORY_DAILY_TICKERS,
                           "gold_proxy": "GLD", "polymarket": MANDATORY_DAILY_TICKERS},

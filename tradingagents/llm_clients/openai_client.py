@@ -180,6 +180,30 @@ def _supports_reasoning_effort(model: str) -> bool:
     return bool(_OPENAI_REASONING_MODEL.match(model.lower().strip()))
 
 
+def _attach_usage_recorder(llm_kwargs: dict) -> None:
+    """Add the shared usage callback without disturbing caller-supplied ones.
+
+    A failure here must never prevent the client from being constructed, so the
+    whole wiring is best-effort and the recorder itself fails open.
+    """
+    try:
+        from tradingagents.observability.usage_log import get_usage_recorder
+
+        recorder = get_usage_recorder()
+        if recorder is None:
+            return
+        callbacks = llm_kwargs.get("callbacks")
+        if callbacks is None:
+            llm_kwargs["callbacks"] = [recorder]
+        elif isinstance(callbacks, (list, tuple)):
+            llm_kwargs["callbacks"] = [*callbacks, recorder]
+        else:
+            # A pre-built callback manager: register on it in place.
+            callbacks.add_handler(recorder, inherit=True)
+    except Exception:  # pragma: no cover - observability is never load-bearing
+        pass
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """Declarative config for one OpenAI-compatible provider.
@@ -329,6 +353,8 @@ class OpenAIClient(BaseLLMClient):
             if key == "reasoning_effort" and not _supports_reasoning_effort(self.model):
                 continue
             llm_kwargs[key] = self.kwargs[key]
+
+        _attach_usage_recorder(llm_kwargs)
 
         # The subclass (provider quirks) comes from the registry spec.
         return chat_cls(**llm_kwargs)
