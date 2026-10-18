@@ -71,6 +71,26 @@ def is_network_error(exc: Exception) -> bool:
     return False
 
 
+def _normalize_no_proxy_entries(value: str) -> str:
+    """Strip the bracketed IPv6 form httpx2 parses as a URL with a bad port.
+
+    ``[::1]`` becomes ``::1`` (bare IPv6 is accepted), duplicates and blank
+    entries are dropped, and the original order is preserved so a repeated call
+    yields the same string.
+    """
+    entries = []
+    seen = set()
+    for raw in value.split(","):
+        entry = raw.strip()
+        if entry.startswith("[") and entry.endswith("]"):
+            entry = entry[1:-1].strip()
+        if not entry or entry in seen:
+            continue
+        seen.add(entry)
+        entries.append(entry)
+    return ",".join(entries)
+
+
 def setup_proxy_bypass(extra_domains: list[str] | None = None):
     """
     强制设置环境变量，让关键 API 域名绕过全局代理。
@@ -80,7 +100,7 @@ def setup_proxy_bypass(extra_domains: list[str] | None = None):
     bypass_str = ",".join(domains)
 
     for key in ("NO_PROXY", "no_proxy"):
-        existing = os.environ.get(key, "")
+        existing = _normalize_no_proxy_entries(os.environ.get(key, ""))
         if not existing or existing in ("localhost,127.0.0.1,::1", ""):
             # WorkBuddy 默认值，直接替换
             os.environ[key] = f"localhost,127.0.0.1,::1,{bypass_str}"
