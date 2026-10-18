@@ -56,6 +56,50 @@ def pytest_configure(config):
     yfinance.set_tz_cache_location(tempfile.mkdtemp(prefix="tradingagents-tests-yf-"))
 
 
+# Proxy variables are scrubbed for tests: `httpx2` (used by langchain_openai)
+# parses every NO_PROXY/no_proxy entry as a URL pattern when an HTTP client is
+# constructed. The bracketed IPv6 entry `[::1]` that this machine's shell exports
+# is parsed as a URL with an invalid port (`Invalid port: ':1]'`), so merely
+# building a `ChatOpenAI` raises `httpx2.InvalidURL` -- before any request is
+# attempted and regardless of _no_network. Both spellings exist in the
+# environment and both are set here.
+_PROXY_ENV_VARS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+_NO_PROXY_ENV_VARS = ("NO_PROXY", "no_proxy")
+
+
+@pytest.fixture(autouse=True)
+def _safe_proxy_environment(request, monkeypatch):
+    """Replace the ambient proxy settings with values httpx2 can parse.
+
+    HTTP(S)/ALL proxy variables are blanked and NO_PROXY/no_proxy are set to
+    ``localhost,127.0.0.1``. The dangerous part is the bracketed IPv6 entry
+    ``[::1]``: httpx2's ``URLPattern`` parses it as a URL and raises
+    ``InvalidURL: Invalid port: ':1]'`` while a ``ChatOpenAI`` client is being
+    *constructed*, not when it connects. Since the tests never need a proxy,
+    deterministic values keep client construction independent of the shell that
+    launched pytest. The same variables are handled in both cases because the
+    machine exports both spellings.
+
+    ``monkeypatch`` restores the original values after every test, so the
+    user's shell environment is never left modified. Tests marked ``integration``
+    do need the real environment (and _no_network lets them through), so they
+    are left untouched.
+    """
+    if request.node.get_closest_marker("integration"):
+        return
+    for name in _PROXY_ENV_VARS:
+        monkeypatch.setenv(name, "")
+    for name in _NO_PROXY_ENV_VARS:
+        monkeypatch.setenv(name, "localhost,127.0.0.1")
+
+
 @pytest.fixture(autouse=True)
 def _no_network(request, monkeypatch):
     """Tests do not reach the network; one that must is marked integration."""
