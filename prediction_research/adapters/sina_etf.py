@@ -86,20 +86,34 @@ def _number(value):
 def fetch_etf_list() -> list[dict]:
     rows: list[dict] = []
     page = 1
-    while page <= 40:
+    seen_pages = set()
+    finished = False
+    while page <= 1000:
         raw = _get(LIST_URL.format(page=page))
         text = raw.decode("utf-8", "replace").strip()
         if not text or text in ("null", "[]"):
+            finished = True
             break
         batch = json.loads(text)
         if not batch:
+            finished = True
             break
+        identity = tuple(str(row.get('symbol')) for row in batch)
+        if identity in seen_pages:
+            raise RuntimeError('sina ETF pagination repeated a page; refusing a partial universe')
+        seen_pages.add(identity)
         rows.extend(batch)
         if len(batch) < 100:
+            finished = True
             break
         page += 1
     if not rows:
         raise RuntimeError("sina ETF universe returned no rows")
+    if not finished:
+        raise RuntimeError('sina ETF pagination limit reached; universe completeness unconfirmed')
+    identities=[str(row.get('symbol') or '') for row in rows]
+    if len(identities)!=len(set(identities)) or not all(identities):
+        raise RuntimeError('sina ETF universe contains duplicate/missing identities')
     return rows
 
 
@@ -133,10 +147,12 @@ def fetch_money_flows(symbols: list[str], workers: int = 4) -> tuple[dict, list[
     return flows, failures
 
 
-def _session_epoch(flows: dict) -> tuple[int, str | None]:
+def _session_epoch(flows: dict) -> tuple[int | None, str | None]:
     dates = sorted({str(record.get("opendate") or "") for record in flows.values() if record.get("opendate")})
     if not dates:
-        raise RuntimeError("sina money flow returned no trade date; cannot stamp quote_epoch")
+        # Preserve the complete quote universe even if the flow service is
+        # unavailable. Unknown quote date must not be replaced with today.
+        return None, None
     trade_date = dates[-1]
     stamp = datetime.strptime(trade_date, "%Y-%m-%d").replace(hour=15, minute=0, second=0, tzinfo=SHANGHAI)
     return int(stamp.timestamp()), trade_date
@@ -171,7 +187,7 @@ def fetch_etf_snapshot(output_dir: Path, fallback_reason: str | None = None) -> 
         records.append({
             "symbol": code,
             "exchange": "SSE" if symbol.lower().startswith("sh") else "SZSE",
-            "name": name, **classify_etf(name), "market_scope": market_scope(name),
+            "name": name, **classify_etf(name, etf_board=True, symbol=code), "market_scope": market_scope(name),
             "price": _number(row.get("trade")), "change_pct": _number(row.get("changepercent")),
             "volume_lots": round(volume / 100.0, 2) if volume is not None else None,
             "amount": _number(row.get("amount")), "turnover_pct": _number(row.get("turnoverratio")),
@@ -190,10 +206,13 @@ def fetch_etf_snapshot(output_dir: Path, fallback_reason: str | None = None) -> 
 
     with_flow = sum(1 for row in records if row["main_net_inflow"] is not None)
     retrieved = datetime.now(timezone.utc).isoformat()
+    if len(records) != len(universe):
+        raise RuntimeError('sina ETF normalization dropped universe records')
     snapshot = {
         "schema_version": 2, "retrieved_at_utc": retrieved,
         "source": "sina:Market_Center.getHQNodeData(etf_hq_fund) + MoneyFlow.ssl_qsfx_zjlrqs",
         "source_market_total": len(universe),
+        "universe_status": "provider_board_pagination_exhausted_not_exchange_registry_certified",
         "fallback": {
             "used": True,
             "reason": (fallback_reason or "eastmoney quote api unavailable")[:400],
@@ -205,7 +224,7 @@ def fetch_etf_snapshot(output_dir: Path, fallback_reason: str | None = None) -> 
                 "and are emitted as null rather than inferred."
             ),
             "unit_notes": "mktcap/nmc converted from 万元 to 元; volume converted from 股 to 手; ratioamount/r0_ratio (ratios) scaled by 100 to percent",
-            "quote_epoch_basis": f"session close 15:00 Asia/Shanghai on {trade_date}",
+            "quote_epoch_basis": f"inferred from flow session close 15:00 Asia/Shanghai on {trade_date}" if trade_date else "unknown_no_dated_flow_source",
             "flow_coverage": {"records": len(records), "with_flow": with_flow,
                               "missing_flow": len(records) - with_flow, "failures_sample": failures[:10]},
         },

@@ -9,12 +9,23 @@ ETF_TAXONOMY = {
     "commodity": "直接或通过期货追踪商品价格；区分黄金现货与商品期货",
     "money": "仅投资货币市场工具并在交易所交易申赎",
     "multi_asset": "合同约定同时配置两类或以上资产，不能归入单一资产类别",
+    "special": "特殊结构或非ETF标记，单列核验产品合同及交易规则",
     "unknown": "公开快照无法可靠判断，保留待基金合同或交易所产品资料复核",
 }
 
 
-def classify_etf(name: str) -> dict[str, str]:
+def classify_etf(name: str, *, etf_board: bool = False, symbol: str | None = None) -> dict[str, str]:
     upper = name.upper().replace("ＥＴＦ", "ETF")
+    if any(key in upper for key in ('LOF','REIT','反向','杠杆','两倍','三倍')):
+        return {"asset_class":"special","subtype":"special"}
+    # Quote-board short names often omit ETF entirely. Explicit known money/
+    # futures identities must precede generic equity keyword inference.
+    if etf_board and str(symbol) in {"159001", "159003", "159005", "511880", "511990"}:
+        return {"asset_class": "money", "subtype": "money_market"}
+    if etf_board and str(symbol) in {"159980", "159981", "159985"}:
+        return {"asset_class": "commodity", "subtype": "commodity_futures"}
+    if any(key in upper for key in ("多资产", "股债", "全天候")):
+        return {"asset_class": "multi_asset", "subtype": "multi_asset"}
     if any(key in upper for key in ("货币", "保证金")) or ("现金" in upper and "现金流" not in upper):
         return {"asset_class": "money", "subtype": "money_market"}
     if "黄金股" in upper:
@@ -23,26 +34,33 @@ def classify_etf(name: str) -> dict[str, str]:
         return {"asset_class": "commodity", "subtype": "gold_spot"}
     if any(key in upper for key in ("豆粕", "有色期货", "能源化工", "商品期货")):
         return {"asset_class": "commodity", "subtype": "commodity_futures"}
-    if any(key in upper for key in ("债", "国开", "政金", "可转债", "信用")):
-        subtype = "convertible_bond" if "转债" in upper else "government_bond" if "国债" in upper else "policy_bank_bond" if any(k in upper for k in ("国开", "政金")) else "credit_bond" if "信用" in upper else "bond_other"
+    if any(key in upper for key in ("原油", "白银", "天然气")):
+        return {"asset_class": "commodity", "subtype": "commodity_other"}
+    if any(key in upper for key in ("债", "国开", "政金", "可转债", "信用", "短融", "同业存单")):
+        subtype = "convertible_bond" if "转债" in upper else "government_bond" if any(k in upper for k in ("国债", "地方债")) else "policy_bank_bond" if any(k in upper for k in ("国开", "政金")) else "credit_bond" if any(k in upper for k in ("信用", "公司债", "企业债", "城投债", "科创债", "短融", "同业存单")) else "bond_other"
         return {"asset_class": "bond", "subtype": subtype}
-    if any(key in upper for key in ("多资产", "股债", "全天候")):
-        return {"asset_class": "multi_asset", "subtype": "multi_asset"}
-    if "主动" in upper and "ETF" in upper:
+    if "主动" in upper and ("ETF" in upper or etf_board):
         return {"asset_class": "equity", "subtype": "active_equity"}
     broad = ("沪深", "中证A", "上证", "深证", "创业板", "科创", "北证", "A500", "A50", "A100", "A股", "红利")
-    sector = ("银行", "证券", "金融", "医药", "医疗", "消费", "军工", "地产", "煤炭", "钢铁", "有色", "化工", "农业", "传媒", "通信", "汽车", "电力", "能源")
-    strategy = ("增强", "价值", "成长", "低波", "质量", "自由现金流", "ESG")
-    if "ETF" in upper:
-        is_broad = any(k in upper for k in broad) or re.search(r"中证(?:A)?\d{2,4}", upper) is not None
-        subtype = "strategy_factor" if any(k in upper for k in strategy) else "broad_market" if is_broad else "sector" if any(k in upper for k in sector) else "thematic"
+    sector = ("银行", "证券", "金融", "医药", "医疗", "消费", "军工", "地产", "煤炭", "钢铁", "有色", "化工", "农业", "传媒", "通信", "汽车", "电力", "能源", "计算机", "券商", "养殖", "机械", "石油")
+    strategy = ("增强", "价值", "成长", "低波", "质量", "自由现金流", "现金流", "红利", "股息", "ESG")
+    short_broad = etf_board and re.search(r'(?:中证|国证|CSI|ZZ|GZ)?(?:2000|1000|800|500|300|180|100|50)(?!\d)|国证大盘|深主板|上证|创业板',upper) is not None
+    sector += ('油气','家电','食品','畜牧','农牧','电网','公用','航空','稀有金','工业金属','家用电器','医用器械')
+    short_equity = etf_board and (short_broad or market_scope(name)=='cross_border' or any(k in upper for k in broad+sector+strategy) or
+        any(k in upper for k in ("创", "科", "港", "恒", "纳", "标普", "日经", "深100", "央视", "民企", "央企", "国企", "互联", "芯片", "电池", "AI", "云计算", "大数据", "卫星", "航天", "机器人", "粮食", "创新药", "稀金", "半导", "软件", "5G", "光伏", "中药", "生物", "新能",'算力','绿电','医器械','全指器械','储能','通航','数字','集成电路','信安','云50')))
+    if "ETF" in upper or short_equity:
+        is_broad = short_broad or any(k in upper for k in broad) or re.search(r"中证(?:A)?\d{2,4}|深100|央视50|纳100|标普500", upper) is not None
+        # Sector/theme suffixes are more specific than a numeric index or
+        # exchange prefix (e.g. 科创芯片, 上证医药, 消费50 are not broad market).
+        is_theme = any(k in upper for k in ('芯片','半导体','人工智能','机器人','新能','数字','科技','算力','光伏','电池','互联','软件','卫星','云计算','储能'))
+        subtype = "strategy_factor" if any(k in upper for k in strategy) else "sector" if any(k in upper for k in sector) else "thematic" if is_theme else "broad_market" if is_broad else "thematic"
         return {"asset_class": "equity", "subtype": subtype}
     return {"asset_class": "unknown", "subtype": "unclassified"}
 
 
 def market_scope(name: str) -> str:
     upper = name.upper()
-    if any(key in upper for key in ("纳指", "标普", "恒生", "港股", "日经", "德国", "法国", "沙特", "东南亚", "中概", "海外", "全球")):
+    if re.search(r'^港(?!口)',upper) or any(key in upper for key in ("纳指", "纳100", "标普", "恒生", "恒科", "恒港", "恒指", "港股", "香港", "HK", "H股", "日经", "东证", "德国", "法国", "沙特", "巴西", "美国", "亚太", "东南亚", "中概", "海外", "全球", "QDII")):
         return "cross_border"
     return "domestic_or_unverified"
 
@@ -117,6 +135,20 @@ def _normalize_index(theme: str) -> str | None:
     纯策略因子（价值/成长等，剥离后无宽基特征）返回 None，交给赛道归并/兜底处理。
     """
     core = theme
+    upper = theme.upper()
+    # Abbreviations on the quote board must share the same exposure bucket;
+    # otherwise A500ETF / A500E / A500中证 consume several candidate slots.
+    aliases = (
+        (r'A500(?!\d)', '中证A500'),
+        (r'沪深300|^(?:景顺|嘉实)?300(?:$|E|基金)', '沪深300'),
+        (r'国证2000|GZ2000', '国证2000'),
+        (r'中证2000|CSI2000|ZZ2000', '中证2000'),
+        (r'中证1000|CSI1000|ZZ1000', '中证1000'),
+        (r'中证500|CSI500|ZZ500|^500(?:$|E|基金)', '中证500'),
+    )
+    for pattern, canonical in aliases:
+        if re.search(pattern, upper):
+            return f'index:{canonical}'
     changed = True
     while changed:
         changed = False

@@ -1,0 +1,47 @@
+{
+  "version": "etf-screen-20261105-v2",
+  "intent": "Fixed hypotheses registered before returns are calculated; no parameter search",
+  "start": "2021-07-01",
+  "end": "2026-11-04",
+  "periods": {
+    "early": ["2021-07-01", "2023-12-31"],
+    "validation": ["2024-01-01", "2024-12-31"],
+    "later": ["2025-01-01", "2026-11-04"]
+  },
+  "period_note": "Chronological diagnostics of fixed rules, not a previously untouched or certified out-of-sample holdout",
+  "initial_cash": 1000000,
+  "top_k": 5,
+  "rebalance_days": [5, 20],
+  "one_way_cost_bps": [5, 15, 30],
+  "min_history_bars": 126,
+  "min_adv20": 5000000,
+  "max_participation_lagged_adv": 0.01,
+  "correlation_cap": 0.90,
+  "retention_rank_buffer": 2,
+  "trade_weight_buffer": 0.02,
+  "target_annual_volatility": 0.12,
+  "risk_off_breadth": 0.40,
+  "risk_off_equity_multiplier": 0.50,
+  "methods": ["cash", "benchmark_hold", "equal_weight", "momentum20", "multi_factor", "pullback", "diversified", "regime_risk"],
+  "profiles": {
+    "multi_factor": {"momentum20": 0.25, "momentum60": 0.25, "momentum120": 0.15, "trend60": 0.15, "low_downside20": 0.10, "log_adv20": 0.10},
+    "pullback": {"momentum60": 0.35, "momentum120": 0.20, "pullback5": 0.25, "low_volatility20": 0.10, "log_adv20": 0.10}
+  },
+  "assets": [
+    {"symbol":"510300","name":"沪深300ETF","asset_class":"equity","scope":"CN","exposure":"CSI300","limit_pct":0.10},
+    {"symbol":"510500","name":"中证500ETF","asset_class":"equity","scope":"CN","exposure":"CSI500","limit_pct":0.10},
+    {"symbol":"510050","name":"上证50ETF","asset_class":"equity","scope":"CN","exposure":"SSE50","limit_pct":0.10},
+    {"symbol":"159915","name":"创业板ETF","asset_class":"equity","scope":"CN","exposure":"CHINEXT","limit_pct":0.20},
+    {"symbol":"588000","name":"科创50ETF","asset_class":"equity","scope":"CN","exposure":"STAR50","limit_pct":0.20},
+    {"symbol":"512880","name":"证券ETF","asset_class":"equity","scope":"CN","exposure":"SECURITIES","limit_pct":0.10},
+    {"symbol":"512660","name":"军工ETF","asset_class":"equity","scope":"CN","exposure":"DEFENSE","limit_pct":0.10},
+    {"symbol":"512170","name":"医疗ETF","asset_class":"equity","scope":"CN","exposure":"HEALTHCARE","limit_pct":0.10},
+    {"symbol":"512800","name":"银行ETF","asset_class":"equity","scope":"CN","exposure":"BANKS","limit_pct":0.10},
+    {"symbol":"159995","name":"芯片ETF","asset_class":"equity","scope":"CN","exposure":"SEMICONDUCTOR","limit_pct":0.10},
+    {"symbol":"518880","name":"黄金ETF","asset_class":"commodity","scope":"CN","exposure":"GOLD","limit_pct":0.10},
+    {"symbol":"159985","name":"豆粕ETF","asset_class":"commodity","scope":"CN","exposure":"SOYMEAL_FUTURES","limit_pct":0.10},
+    {"symbol":"159980","name":"有色ETF","asset_class":"commodity","scope":"CN","exposure":"METALS_FUTURES","limit_pct":0.10},
+    {"symbol":"159981","name":"能源化工ETF","asset_class":"commodity","scope":"CN","exposure":"ENERGY_CHEMICALS_FUTURES","limit_pct":0.10},
+    {"symbol":"515220","name":"煤炭ETF","asset_class":"equity","scope":"CN","exposure":"COAL","limit_pct":0.10}
+  ]
+}

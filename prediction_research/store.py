@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS agent_analyses (
   status TEXT NOT NULL,
   decision_text TEXT,
   report_dir TEXT NOT NULL,
+  rule_override TEXT,
   created_at_utc TEXT NOT NULL,
   UNIQUE(screen_report, ticker, analysis_date, agent_system)
 );
@@ -122,6 +123,7 @@ CREATE TABLE IF NOT EXISTS agent_outcomes (
   actual_up INTEGER NOT NULL,
   direction_correct INTEGER,
   hold_correct_vs_buy INTEGER,
+  rule_direction_correct INTEGER,
   peer_mean_return REAL,
   excess_vs_peer REAL,
   settled_at_utc TEXT NOT NULL,
@@ -194,10 +196,16 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
         # Hold/未识别方向原本计分为 NULL，导致有效样本恒为 0；这几列让它们也能入账。
         outcome_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_outcomes)")}
         for name, declaration in (("hold_correct_vs_buy", "INTEGER"),
+                                  ("rule_direction_correct", "INTEGER"),
                                   ("peer_mean_return", "REAL"),
                                   ("excess_vs_peer", "REAL")):
             if name not in outcome_columns:
                 connection.execute(f"ALTER TABLE agent_outcomes ADD COLUMN {name} {declaration}")
+        # agent_analyses.rule_override：规则闸门（C）把 LLM 的 Hold/Underweight 升级为
+        # Overweight(规则闸门) 时的审计字段；旧表无该列时补建。
+        analysis_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_analyses)")}
+        if "rule_override" not in analysis_columns:
+            connection.execute("ALTER TABLE agent_analyses ADD COLUMN rule_override TEXT")
         connection.commit()
         yield connection
     finally:
@@ -316,12 +324,24 @@ def upsert_event(connection: sqlite3.Connection, event: dict, occurrence: dict) 
 
 def record_agent_analysis(connection: sqlite3.Connection, screen_report: str, item: dict, analysis_date: str) -> str:
     analysis_id = str(uuid.uuid4())
+    # rule_override：规则闸门（C）升级后的评级（如 "Overweight(规则闸门)"），用于审计与结算。
+    # 未触发时为 None，与原始 LLM 评级区分。
+    rule_override = item.get("rule_gated_rating")
+    if rule_override is None and item.get("rule_override"):
+        rule_override = item.get("rule_override")
+    # 必须显式列名：rule_override 是后加的列（ALTER TABLE 追加在末尾），
+    # 依赖 VALUES 位置会让 created_at_utc 与 rule_override 互换（2026-10-21~11-06 共 70 行因此错位）。
     connection.execute(
-        """INSERT INTO agent_analyses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """INSERT INTO agent_analyses
+        (analysis_id, screen_report, ticker, symbol, analysis_date, agent_system,
+         status, decision_text, report_dir, created_at_utc, rule_override)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(screen_report,ticker,analysis_date,agent_system) DO UPDATE SET
-        status=excluded.status,decision_text=excluded.decision_text,report_dir=excluded.report_dir,created_at_utc=excluded.created_at_utc""",
+        status=excluded.status,decision_text=excluded.decision_text,report_dir=excluded.report_dir,
+        rule_override=excluded.rule_override,created_at_utc=excluded.created_at_utc""",
         (analysis_id, screen_report, item["ticker"], item["symbol"], analysis_date, "TradingAgents",
-         item["status"], item.get("decision"), item["report_dir"], datetime.now(timezone.utc).isoformat()),
+         item["status"], item.get("decision"), item["report_dir"],
+         datetime.now(timezone.utc).isoformat(), rule_override),
     )
     connection.commit()
     row = connection.execute(

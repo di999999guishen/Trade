@@ -44,4 +44,7 @@ def fetch_daily(symbol: str, output_dir: Path) -> dict:
         writer.writeheader()
         writer.writerows(rows)
     temporary.replace(path)
+    from ..price_provenance import write_price_metadata
+    write_price_metadata(path, provider='sina_kline', adjustment='unadjusted',
+                         volume_unit='shares', amount_status='unavailable', source_url=request.full_url)
     return {"symbol": symbol, "rows": len(rows), "start": rows[0]["date"], "end": rows[-1]["date"], "path": str(path.resolve()), "provider_name": "Sina K-line", "amount_status": "unavailable"}

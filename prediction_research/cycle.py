@@ -106,6 +106,7 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
 
     persist()
     can_screen = True
+    screen_block_reason = 'current_snapshot_fetch_failed'
     if not skip_fetch:
         def fetch_snapshot():
             manifest = fetch_etf_snapshot(resolve_project_path(cfg, cfg["etf_market"]["snapshot_dir"]))
@@ -116,6 +117,20 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
         step("ingest_cached_snapshot", lambda: ingest_etf_snapshot(cfg))
     # A snapshot fetched in this run must exist before the decision is made.
     report["decision_at_utc"] = now_utc()
+    if cfg.get("universe_assessment", {}).get("enabled"):
+        if can_screen:
+            from .universe_assessment import run_universe_assessment
+            assessed = step("assess_full_etf_universe", lambda: run_universe_assessment(cfg, report["decision_at_utc"]))
+            if assessed:
+                report["artifacts"]["universe_assessment"] = assessed["path"]
+                report["artifacts"]["universe_assessment_report"] = assessed["report"]
+                report["universe_coverage"] = assessed["coverage"]
+                cfg.setdefault("workflow", {})["universe_assessment_path"] = assessed["path"]
+            else:
+                can_screen = False
+                screen_block_reason = 'current_universe_assessment_failed'
+        else:
+            blocked("assess_full_etf_universe", "current_snapshot_fetch_failed")
     screen_context = None
     candidates = []
     if can_screen:
@@ -126,9 +141,11 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
         screened = step("screen_etfs", screen_action)
         if screened:
             screen_context = (Path(screened["path"]), screened["screen"])
+            # Every downstream stage must use THIS cycle's frozen selection.
+            cfg.setdefault("workflow", {})["frozen_screen_report"] = screened["path"]
             candidates = screened["screen"]["selected"][:top_n]
     else:
-        blocked("screen_etfs", "current_snapshot_fetch_failed")
+        blocked("screen_etfs", screen_block_reason)
     cfg["universes"]["screened_current"] = [
         {"symbol": row["symbol"], "name": row["name"], "asset_type": f"{row['subtype']}_etf", "exposure": row["screen_group"]}
         for row in candidates
@@ -155,6 +172,17 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
     cfg["universes"]["screened_current"] = [row for row in cfg["universes"]["screened_current"] if row["symbol"] in eligible_symbols]
     report["prediction_eligible_symbols"] = sorted(eligible_symbols)
     report["prediction_exclusions"] = ready.get("issues", []) if ready else [{"reason": "readiness_check_failed"}]
+
+    if cfg.get("factor_research", {}).get("enabled") and screen_context:
+        from .screen_shadow import shadow_from_frozen_screen
+        factor_observation = step("screen_factor_shadow", lambda: shadow_from_frozen_screen(cfg, screen_context[1]))
+        if factor_observation and factor_observation.get("path"):
+            report["artifacts"]["screen_factor_shadow"] = factor_observation["path"]
+            cfg.setdefault("workflow", {})["factor_shadow_path"] = factor_observation["path"]
+        from .screen_shadow import settle_factor_shadows
+        factor_settlement = step("settle_factor_shadows", lambda: settle_factor_shadows(cfg))
+        if factor_settlement:
+            report["artifacts"]["factor_shadow_settlement"] = factor_settlement["path"]
 
     if cfg.get("evidence", {}).get("enabled", False) and screen_context:
         from .etf_integration import run_etf_integration
@@ -223,7 +251,11 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
         def run_agents_action():
             path, payload = run_tradingagents(cfg, min(top_n, int(cfg.get("workflow", {}).get("agent_top_n", 5))))
             agent_payload.update(payload)
-            return str(path)
+            report["artifacts"]["tradingagents_batch"] = str(path.resolve())
+            expected = len(payload.get("candidates", []))
+            successes = sum(item.get("status") == "ok" for item in payload.get("items", []))
+            return {"path": str(path.resolve()), "expected": expected, "successes": successes,
+                    "outcome": "complete" if expected > 0 and successes == expected else "partial_failure"}
 
         agent_run = step("tradingagents", run_agents_action)
         if agent_run is None:
@@ -256,7 +288,7 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
                               "analyses_produced": llm_produced,
                               "analyses_reused": llm_reused,
                               "skip_flag": llm_skip_flag, "skip_reason": llm_disabled_reason,
-                              "usable": (llm_produced > 0 or llm_settled > 0) and not llm_skip_flag}
+                              "usable": llm_produced > 0 and not llm_skip_flag}
     report["warnings"] = []
     if not report["llm_coverage"]["usable"]:
         report["warnings"].append({

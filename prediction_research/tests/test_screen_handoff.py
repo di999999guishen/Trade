@@ -36,6 +36,13 @@ def test_flow_to_cap_has_signed_and_bounded_contribution(cfg):
 
 
 def test_frozen_screen_reaches_actual_subprocess_argument(cfg, monkeypatch):
+    from datetime import datetime
+    from prediction_research import news_handoff
+    check = news_handoff.validate_screen_date
+    monkeypatch.setattr(news_handoff, "validate_screen_date", lambda screen, cfg: check(
+        screen, cfg, datetime.fromisoformat("2024-08-17T12:00:00+00:00")))
+    from prediction_research.tests.test_cycle_remediation import write_histories
+    write_histories(cfg)
     snapshot(cfg)
     _, frozen = screen_etfs(cfg, decision_at_utc="2024-08-17T12:00:00Z")
     project = Path(cfg["_project_dir"]) / "agent_project"

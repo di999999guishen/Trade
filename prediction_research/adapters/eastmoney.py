@@ -65,6 +65,9 @@ def fetch_daily(symbol: str, output_dir: Path, start: str = "20100101", end: str
         writer.writeheader()
         writer.writerows(rows)
     temporary.replace(path)
+    from ..price_provenance import write_price_metadata
+    write_price_metadata(path, provider='eastmoney_push2his', adjustment='qfq_fqt_1',
+                         volume_unit='lot_100_shares', amount_status='available', source_url=request.full_url)
     return {"symbol": symbol, "rows": len(rows), "start": rows[0]["date"], "end": rows[-1]["date"], "path": str(path.resolve()), "provider_name": data.get("name")}
 
 

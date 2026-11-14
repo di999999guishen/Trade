@@ -1,5 +1,7 @@
 import os
 import re
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -11,6 +13,31 @@ from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
 from .capabilities import get_capabilities
 from .validators import validate_model
+
+
+# Opt-in request serialization for channels with a hard concurrency/QPS cap.
+# The InternAI Key2 gateway answers a single request fine (~28s) but returns
+# 429 "Channel rate limit reached for model" when TradingGraph fans out several
+# analysts at once. TRADINGAGENTS_LLM_SERIALIZE=1 forces one in-flight request
+# per process and keeps a small gap between consecutive calls. Off by default:
+# every other provider/automation keeps its original parallel behavior.
+_SERIAL_LOCK = threading.Lock()
+_SERIAL_LAST_TS = [0.0]
+_SERIAL_MIN_GAP = 1.0
+
+
+def _serialize_requests() -> bool:
+    return os.environ.get("TRADINGAGENTS_LLM_SERIALIZE") == "1"
+
+
+def _fast_failover() -> bool:
+    """2026-11-13: fail immediately instead of sitting in a retry/backoff loop.
+
+    Set only by the manual key2 launcher. The orchestrator (tradingagents_adapter)
+    owns the retry policy then: one immediate re-call, then the official channel.
+    Every other provider/automation keeps its original behaviour.
+    """
+    return os.environ.get("TRADINGAGENTS_LLM_FAST_FAILOVER") == "1"
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -31,6 +58,34 @@ class NormalizedChatOpenAI(ChatOpenAI):
     reasoning_content roundtrip) live in subclasses so this base class
     stays small.
     """
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Fast failover: no retry loop and no backoff sleep. A 429 (or any
+        # gateway failure) surfaces at once so the orchestrator can re-call
+        # immediately and then switch this ticker to the official channel.
+        # The 6-attempt/20-60s loop below was the source of the ~6-minute stall.
+        if _fast_failover():
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        if not _serialize_requests():
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        with _SERIAL_LOCK:
+            elapsed = time.monotonic() - _SERIAL_LAST_TS[0]
+            if elapsed < _SERIAL_MIN_GAP:
+                time.sleep(_SERIAL_MIN_GAP - elapsed)
+            last_error = None
+            for attempt in range(6):
+                try:
+                    return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+                except Exception as exc:
+                    text = str(exc).lower()
+                    if "429" not in text and "rate limit" not in text:
+                        raise
+                    last_error = exc
+                    wait = min(20 * (attempt + 1), 60)
+                    time.sleep(wait)
+                finally:
+                    _SERIAL_LAST_TS[0] = time.monotonic()
+            raise last_error
 
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(super().invoke(input, config, **kwargs))

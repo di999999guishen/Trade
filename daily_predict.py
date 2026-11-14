@@ -1,7 +1,10 @@
-"""每日预测：配置的持仓 + 固定黄金(GLD)代理，附 Polymarket 证据。
+"""每日预测：配置的持仓/跟踪标的，附 Polymarket 证据。
 
-注：2026-10-15 起移除 SPY/QQQ（仅关注境内标的时属白烧 DeepSeek 额度的三份之一），
-仅保留 GLD 作为黄金 ETF 代理。如需恢复美股宽基跟踪，改 MANDATORY_DAILY_TICKERS 即可。
+变更史：
+- 2026-10-15 移除 SPY/QQQ（仅关注境内标的时属白烧额度的三份之一），仅留 GLD 作黄金代理。
+- 2026-11-12 用户指令：持仓池整体换为 588940 / 510100 / 159740 / 159792 四只，
+  且「美股暂时不预测」⇒ MANDATORY_DAILY_TICKERS 置空（原 GLD 不再每日分析）。
+  恢复美股/黄金代理只需把 GLD（或 SPY/QQQ）填回 MANDATORY_DAILY_TICKERS，无需改其它代码。
 """
 
 import argparse
@@ -27,16 +30,27 @@ except Exception:  # pragma: no cover - 缺失时不阻断
 from daily_artifacts import new_run_id, save_daily_result
 
 PROJECT_DIR = _PROJECT_DIR
-DEFAULT_HOLDINGS = ("510050.SS", "515220.SS")
-MANDATORY_DAILY_TICKERS = ("GLD",)  # 2026-10-15 移除 SPY/QQQ：仅境内标的时不跟踪美股宽基
-MAX_RETRIES = 5
+# 2026-11-12 用户指令：持仓/跟踪池整体替换（原 510050.SS / 515220.SS 移出每日预测）。
+# 后缀必须按交易所写：.SS -> sh、.SZ -> sz；_parse_symbol 据此选新浪行情通道，
+# 写成 159740.SS 会被误判为上交所。
+DEFAULT_HOLDINGS = ("588940.SS", "510100.SS", "159740.SZ", "159792.SZ")
+# 2026-11-12 用户指令「美股暂时不预测」：置空即不再每日分析 GLD（黄金代理）。
+# 恢复时填回 ("GLD",) 即可，其余代码分支无需改动。
+MANDATORY_DAILY_TICKERS: tuple[str, ...] = ()
+# 2026-11-13: 外层 wrapper 注入 TRADINGAGENTS_DAILY_MAX_RETRIES=0 时走「零等待」
+# 路径（key2 失败由外层逐只子进程立刻切官方），默认值 5 次退避保持不变。
+# 00:00 官方自动化不设该变量 ⇒ 行为零变更。
+MAX_RETRIES = int(os.environ.get("TRADINGAGENTS_DAILY_MAX_RETRIES", "5"))
 INITIAL_DELAY = 10
 logger = logging.getLogger(__name__)
 
 
 def build_daily_tickers(configured: str | None = None,
                         candidates: list[str] | None = None) -> list[str]:
-    """DAILY_TICKER changes holdings, never removes the mandatory daily instrument (GLD).
+    """DAILY_TICKER replaces the default holdings; mandatory instruments are always appended.
+
+    ``MANDATORY_DAILY_TICKERS`` is empty since 2026-11-12 (US/GLD tracking paused),
+    so the resulting list is just the configured holdings plus any screened names.
 
     ``candidates`` is opt-in: existing callers pass only ``configured`` and keep
     the exact pre-screening behavior. When ``TRADINGAGENTS_SCREEN_TOP_N`` is a
@@ -303,14 +317,19 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",
                         help="只打印每日标的，不联网、不调用模型、不写预测结果")
+    parser.add_argument("--analysis-date", help="显式分析日期 YYYY-MM-DD，跨午夜续跑不改变日期")
+    parser.add_argument("--results-dir", type=Path, help="本次运行专属产物目录")
+    parser.add_argument("--news-file", type=Path, help="本次运行冻结的新闻 JSON")
     args = parser.parse_args(argv)
+    if args.analysis_date:
+        datetime.strptime(args.analysis_date, "%Y-%m-%d")
     from dotenv import load_dotenv
 
     load_dotenv(PROJECT_DIR / ".env")
     tickers = build_daily_tickers(os.getenv("DAILY_TICKER"), _candidates_from_env())
     if args.dry_run:
-        print(json.dumps({"tickers": tickers, "mandatory": MANDATORY_DAILY_TICKERS,
-                          "gold_proxy": "GLD", "polymarket": MANDATORY_DAILY_TICKERS},
+        print(json.dumps({"tickers": tickers, "mandatory": list(MANDATORY_DAILY_TICKERS),
+                          "polymarket": list(MANDATORY_DAILY_TICKERS)},
                          ensure_ascii=False, indent=2))
         return 0
 
@@ -324,21 +343,25 @@ def main(argv=None) -> int:
                   logging.FileHandler(PROJECT_DIR / "logs" / "daily_predict.log", encoding="utf-8")],
     )
     now = datetime.now()
-    analysis_date = now.strftime("%Y-%m-%d")
+    analysis_date = args.analysis_date or now.strftime("%Y-%m-%d")
     config = build_config()
     # 加载「独立新闻流」摘要（宏观/ETF成分股/机构13F），注入每只标的分析上下文
     news_flow_context = ""
     try:
         from news_aggregator.report_flow import load_latest_context
-        news_flow_context = load_latest_context()
+        news_flow_context = load_latest_context(source_path=str(args.news_file) if args.news_file else None)
         if news_flow_context:
             print(f"  📡 已加载新闻流摘要（{len(news_flow_context)} 字）")
     except Exception as exc:  # 新闻流缺失不阻断预测
         logger.warning("新闻流摘要加载失败: %s", exc)
     print(f"\n运行时间: {now:%Y-%m-%d %H:%M}\n分析日期: {analysis_date}")
-    print(f"分析标的: {', '.join(tickers)}\n固定每日: GLD（黄金ETF代理）")
+    print(f"分析标的: {', '.join(tickers)}")
+    if MANDATORY_DAILY_TICKERS:
+        print(f"固定每日: {', '.join(MANDATORY_DAILY_TICKERS)}")
+    else:
+        print("固定每日: 无（2026-11-12 起美股/黄金代理暂停预测）")
     failed = run_daily_predictions(
-        tickers, analysis_date, now, config, PROJECT_DIR / "results" / "daily",
+        tickers, analysis_date, now, config, args.results_dir or PROJECT_DIR / "results" / "daily",
         news_flow_context=news_flow_context or None)
     if failed:
         print(f"\n⚠️ 完成，{len(failed)}/{len(tickers)} 只标的失败: {', '.join(failed)}")

@@ -47,6 +47,7 @@ def _fetch_eastmoney_snapshot(output_dir: Path) -> dict:
     total = None
     source_url = None
     page_number = 1
+    seen_pages = set()
     while total is None or len(pages) < total:
         params["pn"] = page_number
         raw = None
@@ -72,9 +73,15 @@ def _fetch_eastmoney_snapshot(output_dir: Path) -> dict:
         total = int(data.get("total") or 0)
         if not page:
             break
+        identity = tuple(str(row.get('f12')) for row in page)
+        if identity in seen_pages:
+            raise RuntimeError('Eastmoney ETF pagination repeated a page')
+        seen_pages.add(identity)
         pages.extend(page)
         page_number += 1
     diff = list({str(row.get("f12")): row for row in pages if row.get("f12")}.values())
+    if not diff or len(diff) != total:
+        raise RuntimeError(f'Eastmoney ETF universe incomplete: {len(diff)} unique records / {total} reported')
     retrieved = datetime.now(timezone.utc).isoformat()
     records = []
     for row in diff:
@@ -84,7 +91,7 @@ def _fetch_eastmoney_snapshot(output_dir: Path) -> dict:
             continue
         record = {
             "symbol": symbol, "exchange": "SSE" if int(row.get("f13") or 0) == 1 else "SZSE",
-            "name": name, **classify_etf(name), "market_scope": market_scope(name),
+            "name": name, **classify_etf(name, etf_board=True, symbol=symbol), "market_scope": market_scope(name),
             "price": row.get("f2"), "change_pct": row.get("f3"), "volume_lots": row.get("f5"),
             "amount": row.get("f6"), "turnover_pct": row.get("f8"), "volume_ratio": row.get("f10"),
             "market_cap": row.get("f20"), "float_market_cap": row.get("f21"),
@@ -96,9 +103,12 @@ def _fetch_eastmoney_snapshot(output_dir: Path) -> dict:
             "quote_epoch": row.get("f124"),
         }
         records.append(record)
+    if len(records) != total:
+        raise RuntimeError('Eastmoney ETF normalization dropped universe records')
     snapshot = {
         "schema_version": 2, "retrieved_at_utc": retrieved,
         "source": source_url, "source_market_total": total,
+        "universe_status": "provider_reported_count_matched_not_exchange_registry_certified",
         "classification_status": "market universe from ETF quote boards; per-record asset/subtype labels are name-inferred and require contract verification",
         "flow_definition": "Eastmoney f62/f184 main flow plus f66/f69 super-large and f72/f75 large-order transaction-size estimates; not ETF creations/redemptions and not disclosed institutional holdings",
         "records": records,

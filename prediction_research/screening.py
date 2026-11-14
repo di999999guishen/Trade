@@ -26,6 +26,20 @@ def _number(value, default=0.0) -> float:
     return float(value) if isinstance(value, (int, float)) else default
 
 
+def _overheat_value(change: float | None, threshold: float = 7.0) -> float | None:
+    """已涨过热程度，归一到 [0, 1]；未过热或下跌为 0；change 缺失返回 None。
+
+    作为**负向**分量加入粗筛得分（overheat_penalty 权重），抵消粗筛"追热度"偏差
+    （RC2：粗筛 0.50 权重押在资金热度/已涨上，挑出的恰恰是下游 LLM 最不想追高的热门）。
+    change 在 (threshold, threshold+10] 线性映射到 (0, 1]，超过上限封顶为 1。
+    """
+    if change is None:
+        return None
+    if change <= threshold:
+        return 0.0
+    return max(0.0, min(1.0, (change - threshold) / 10.0))
+
+
 def _snapshot_path(directory: Path, manifest: dict) -> Path:
     recorded = Path(manifest["path"])
     if recorded.exists():
@@ -138,26 +152,89 @@ def selection_limit(rules: dict, limit: int | None = None) -> int | None:
 
 def rule_identity(rules: dict, limit: int | None) -> str:
     return hashlib.sha256(json.dumps({"rules": rules, "selection_limit": limit,
-                                     "algorithm_version": 5}, sort_keys=True).encode("utf-8")).hexdigest()
+                                     "algorithm_version": 6}, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _record_rejection(rejections: list | None, row: dict, stage: str, reason: str,
+                      field_status: str = "present", **extra) -> None:
+    """Observation-only hook for the coarse-screen hard filters.
+
+    ``rejections`` defaults to None, so every existing ``select_etfs`` caller
+    keeps byte-identical behaviour. Records feed
+    ``screen_diagnostics.build_waterfall`` and never affect scoring, ordering
+    or selection. Keeping the records here (rather than re-running predicates
+    in the diagnostics module) means the diagnosis cannot drift from the real
+    eligibility decision.
+    """
+    if rejections is None:
+        return
+    record = {"symbol": row.get("symbol"), "name": row.get("name"),
+              "stage": stage, "reason": reason, "field_status": field_status}
+    record.update(extra)
+    rejections.append(record)
+
+
+def _eligibility_reason(row: dict, rules: dict, amount: float,
+                        market_cap: float, price: float) -> tuple[str, str]:
+    """Label which part of the unchanged compound eligibility condition failed."""
+    if row["asset_class"] not in rules["asset_classes"]:
+        return "asset_class_not_allowed", "present"
+    if finite(row.get("amount")) is None:
+        return "amount_missing", "missing"
+    if amount <= 0:
+        return "amount_non_positive", "present"
+    if finite(row.get("market_cap")) is None:
+        return "market_cap_missing", "missing"
+    if market_cap <= 0:
+        return "market_cap_non_positive", "present"
+    if amount < rules["min_amount"]:
+        return "below_min_amount", "present"
+    if market_cap < rules["min_market_cap"]:
+        return "below_min_market_cap", "present"
+    if finite(row.get("price")) is None:
+        return "price_missing", "missing"
+    if price <= 0:
+        return "price_non_positive", "present"
+    return "unclassified", "present"
 
 
 def select_etfs(records: list[dict], rules: dict, limit: int | None = None, atr_lookup=None,
-                as_of=None, exclusions: list | None = None) -> tuple[list, list]:
+                as_of=None, exclusions: list | None = None,
+                rejections: list | None = None) -> tuple[list, list]:
     cap = selection_limit(rules, limit)
     eligible = []
     for row in records:
-        row = {**row, **classify_etf(row["name"]), "market_scope": market_scope(row["name"])}
+        row = {**row, **classify_etf(row["name"], etf_board=True, symbol=row.get("symbol")), "market_scope": market_scope(row["name"])}
         amount = finite(row.get("amount")) or 0.0
         market_cap = finite(row.get("market_cap")) or 0.0
         price = finite(row.get("price")) or -1.0
+        if row['asset_class']=='money' and row['asset_class'] not in rules['asset_classes']:
+            exclusion=money_market_exclusion(row,rules,atr_lookup,as_of)
+            if exclusions is not None:
+                exclusions.append(exclusion or {'symbol':row['symbol'],'name':row['name'],
+                    'reason':'money_category_evaluated_separately','basis':'universe_assessment'})
+            _record_rejection(rejections, row, "money_category_excluded",
+                              "money_market_asset_class_not_in_allowed_set", "present",
+                              basis=(exclusion or {}).get("basis"))
+            continue
         if row["asset_class"] not in rules["asset_classes"] or amount <= 0 or market_cap <= 0 or amount < rules["min_amount"] or market_cap < rules["min_market_cap"] or price <= 0:
+            reason, field_status = _eligibility_reason(row, rules, amount, market_cap, price)
+            _record_rejection(rejections, row, "eligibility", reason, field_status)
             continue
         exclusion = money_market_exclusion(row, rules, atr_lookup, as_of)
         if exclusion is not None:
             if exclusions is not None:
                 exclusions.append(exclusion)
+            _record_rejection(rejections, row, "money_market_exclusion",
+                              str(exclusion.get("reason") or "flat_price_or_par_peg"), "present",
+                              basis=exclusion.get("basis"))
             continue
         if finite(row.get("main_net_inflow_pct")) is None or finite(row.get("main_net_inflow")) is None:
+            # 红线：缺 main_net_inflow(_pct) 即跳过，绝不把缺失当成零或当成通过。
+            _record_rejection(rejections, row, "missing_money_flow",
+                              "main_net_inflow_or_pct_missing", "missing",
+                              missing_fields=[key for key in ("main_net_inflow", "main_net_inflow_pct")
+                                              if finite(row.get(key)) is None])
             continue
         flow_pct = max(-30.0, min(30.0, _number(row.get("main_net_inflow_pct")))) / 30.0
         change = finite(row.get("change_pct"))
@@ -173,12 +250,24 @@ def select_etfs(records: list[dict], rules: dict, limit: int | None = None, atr_
                         "order_divergence": float(configured.get("order_divergence", weights["order_divergence"]))})
         weights.update({name: float(configured.get(name, 0.0))
                         for name in ("flow_to_cap", "relative_strength")})
+        # 反过热惩罚（RC2 修复）：已涨过热的标的在粗筛阶段被扣分，避免把"已经热起来"
+        # 的 ETF 一味推到 top，导致下游 LLM 对热门天然"别追高"→ Underweight。
+        weights["overheat_penalty"] = float(configured.get("overheat_penalty", 0.0))
+        # screen_mode：liquidity_only 时把 flow/momentum/flow_to_cap 归零，让粗筛退化为
+        # "流动性 + 可交易性 + 背离"过滤，增持判定权全交下游（LLM + C 规则闸门）。
+        if str(rules.get("screen_mode", "composite")).lower() == "liquidity_only":
+            weights["flow"] = 0.0
+            weights["momentum"] = 0.0
+            weights["flow_to_cap"] = 0.0
         if any(not math.isfinite(value) or value < 0 for value in weights.values()):
             raise ValueError("screen score weights cannot be negative")
+        overheat_threshold = float(rules.get("overheat_threshold_pct", 7.0))
+        overheat = _overheat_value(change, overheat_threshold)
         components = {"flow": flow_pct, "liquidity": liquidity, "momentum": momentum,
                       "order_divergence": divergence["factor"],
                       "flow_to_cap": max(-1.0, min(1.0, row["main_net_inflow"] / market_cap / 0.01)),
-                      "relative_strength": None}
+                      "relative_strength": None,
+                      "overheat_penalty": (-overheat) if overheat is not None else None}
         eligible.append({**row, "screen_group": screen_group(row["name"], row["subtype"]),
                          "screen_components": components, "screen_weights": weights,
                          "order_divergence": divergence})
@@ -212,6 +301,9 @@ def select_etfs(records: list[dict], rules: dict, limit: int | None = None, atr_
     for row in eligible:
         group = row["screen_group"]
         if group_counts.get(group, 0) >= int(rules.get("max_per_group", 1)):
+            _record_rejection(rejections, row, "group_cap_exceeded",
+                              "max_per_group_reached", "present", screen_group=group,
+                              screen_score=row.get("screen_score"))
             continue
         selected.append(row)
         group_counts[group] = group_counts.get(group, 0) + 1
@@ -238,12 +330,43 @@ def _screen_etfs_once(cfg: dict, limit: int | None = None, decision_at_utc: str 
         latest_quote_day = max(quote_day(row) for row in fresh)
         fresh = [row for row in fresh if quote_day(row) == latest_quote_day]
     rules = cfg["etf_market"]["screen"]
+    expected = cfg.get("workflow", {}).get("expected_feature_date")
+    if expected and (not fresh or latest_quote_day.isoformat() != expected):
+        raise ValueError(f"ETF snapshot quote date does not match requested {expected}")
     cap = selection_limit(rules, limit)
     atr_lookup = build_atr_lookup(cfg)
     money_market_excluded: list = []
+    # 诊断开关刻意放在配置顶层（不是 etf_market.screen），否则 rule_hash 会变，
+    # 当日冻结粗筛会被当成新批次。默认只观察，不改排序、不改冻结语义。
+    diag_cfg = cfg.get("screen_diagnostics") or {}
+    diag_enabled = bool(diag_cfg.get("enabled", False)) and \
+        str(diag_cfg.get("mode", "observe_only")).lower() == "observe_only"
+    rejections: list = []
     eligible, selected = select_etfs(fresh, rules, cap, atr_lookup=atr_lookup,
-                                     exclusions=money_market_excluded)
+                                     as_of=latest_quote_day if fresh else None,
+                                     exclusions=money_market_excluded,
+                                     rejections=rejections if diag_enabled else None)
+    diagnostics = None
+    last_good_path = None
+    if diag_enabled:
+        from .screen_diagnostics import build_diagnostics, commit_last_good
+        last_good_path = resolve_project_path(
+            cfg, diag_cfg.get("last_good_path", "state/screen_last_good.json"))
+        diagnostics = build_diagnostics(
+            manifest=manifest, snapshot=snapshot, fresh=fresh, rules=rules,
+            eligible=eligible, selected=selected, rejections=rejections,
+            decision_at_utc=decision.isoformat(), last_good_path=last_good_path,
+            source_priority=diag_cfg.get("source_priority"),
+            max_samples=int(diag_cfg.get("max_rejection_samples", 5)),
+            max_age_days=max_age / 86400,
+            selection_cap=cap,
+            diagnostics_config=diag_cfg,
+            top_groups=int(diag_cfg.get("top_group_breakdown", 5)),
+        )
     if not selected:
+        if diagnostics is not None:
+            commit_last_good(last_good_path, diagnostics, status="failed",
+                             failure_reason="no eligible ETF candidates with fresh, complete money-flow data")
         raise ValueError("no eligible ETF candidates with fresh, complete money-flow data")
     observation = build_opportunity_observation(cfg, eligible, selected, manifest, decision.isoformat())
     payload = {
@@ -264,6 +387,12 @@ def _screen_etfs_once(cfg: dict, limit: int | None = None, decision_at_utc: str 
             "selected_bearish": sum(row["order_divergence"]["signal"] == "bearish_divergence" for row in selected),
         },
     }
+    if diagnostics is not None:
+        payload["screen_diagnostics"] = diagnostics
+    from .universe_assessment import assessment_binding
+    binding = assessment_binding(cfg, payload)
+    if binding:
+        payload['universe_assessment'] = binding
     runs = resolve_project_path(cfg, cfg["runs_dir"])
     runs.mkdir(parents=True, exist_ok=True)
     path = runs / f"screen_etf_flow_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
@@ -280,6 +409,13 @@ def _screen_etfs_once(cfg: dict, limit: int | None = None, decision_at_utc: str 
             if utc(payload["decision_at_utc"]) > decision:
                 raise ValueError("frozen screen was created after the requested decision")
             selected = payload["selected"]
+            if diagnostics is not None:
+                # 冻结 payload 原样保留，只追加「本次观察」字段；不回填历史记录。
+                payload["current_screen_diagnostics"] = {
+                    **diagnostics,
+                    "binding": "current_observation_not_frozen_decision_evidence",
+                    "frozen_screen_reused": True,
+                }
             payload["reused_frozen_screen"] = True
             # Keep the historical screen byte-for-byte in the database. New
             # observations have their own source and time, never inherited by
@@ -311,6 +447,8 @@ def _screen_etfs_once(cfg: dict, limit: int | None = None, decision_at_utc: str 
                                        (selection_id, payload["decision_at_utc"]))
         connection.commit()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if diagnostics is not None:
+        commit_last_good(last_good_path, diagnostics, status="ok")
     return path, payload
 
 
@@ -355,7 +493,7 @@ def summarize_etfs(cfg: dict) -> dict:
     directory = resolve_project_path(cfg, cfg["etf_market"]["snapshot_dir"])
     manifest = json.loads((directory / "latest.json").read_text(encoding="utf-8"))
     snapshot = json.loads(_snapshot_path(directory, manifest).read_text(encoding="utf-8"))
-    rows = [{**row, **classify_etf(row["name"]), "market_scope": market_scope(row["name"])} for row in snapshot["records"]]
+    rows = [{**row, **classify_etf(row["name"], etf_board=True, symbol=row.get('symbol')), "market_scope": market_scope(row["name"])} for row in snapshot["records"]]
     return {
         "snapshot": manifest,
         "records": len(rows),
@@ -363,7 +501,7 @@ def summarize_etfs(cfg: dict) -> dict:
         "subtypes": dict(sorted(Counter(row["subtype"] for row in rows).items())),
         "market_scopes": dict(sorted(Counter(row["market_scope"] for row in rows).items())),
         "unknown_examples": [{"symbol": row["symbol"], "name": row["name"]} for row in rows if row["asset_class"] == "unknown"][:20],
-        "classification_warning": "Counts cover the configured Eastmoney ETF quote boards and use name inference. Bond and multi-asset types exist in the official taxonomy but are absent from this source snapshot; exchange contract-level reconciliation is required before claiming a complete listed-product inventory.",
+        "classification_warning": "Counts cover the supplied provider ETF snapshot and use names or explicit known codes. Every category has an assessment route; exchange contract-level reconciliation is required before claiming a complete listed-product inventory.",
     }
 
 
@@ -374,7 +512,7 @@ def ingest_etf_snapshot(cfg: dict, manifest: dict | None = None) -> dict:
     inserted = 0
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
         for source_row in snapshot["records"]:
-            row = {**source_row, **classify_etf(source_row["name"]), "market_scope": market_scope(source_row["name"])}
+            row = {**source_row, **classify_etf(source_row["name"], etf_board=True, symbol=source_row.get('symbol')), "market_scope": market_scope(source_row["name"])}
             before = connection.total_changes
             connection.execute(
                 """INSERT OR IGNORE INTO etf_flow_snapshots

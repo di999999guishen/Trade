@@ -127,6 +127,19 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
         key = "max_output_tokens" if provider == "google" else "max_tokens"
         kwargs[key] = _coerce_max_tokens(max_tokens)
 
+    # Per-request timeout, opt-in (2026-11-13). An unresponsive gateway can
+    # otherwise hold a request open for ~100 min; without this cap the caller
+    # cannot fail fast and hand the ticker to the fallback channel.
+    request_timeout = config.get("llm_request_timeout")
+    if request_timeout is not None and request_timeout != "":
+        try:
+            seconds = float(request_timeout)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"llm_request_timeout must be a number, got {request_timeout!r}") from exc
+        if seconds <= 0:
+            raise ValueError(f"llm_request_timeout must be > 0, got {request_timeout!r}")
+        kwargs["timeout"] = seconds
+
     return kwargs
 
 

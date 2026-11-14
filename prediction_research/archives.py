@@ -306,7 +306,7 @@ def archive_cycle(cfg: dict, report: dict, cycle_path: str | Path) -> dict:
                 continue
             source = _resolve_source(recorded, [runs], migrate=True)
             basename = _basename(recorded)
-            if (source is None or source.suffix not in {".json", ".md"}
+            if (source is None or source.suffix not in {".json", ".md", ".html"}
                     or basename.startswith(".") or _SECRET.search(basename)):
                 missing.append({"kind": "artifact", "role": role, "reason": "missing_or_disallowed_source"})
                 continue

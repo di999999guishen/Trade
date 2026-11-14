@@ -200,8 +200,10 @@ def _run_trading_agent(ticker: str, name: str, analysis_date: str):
     config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-flash")
     config["quick_think_llm"] = os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "deepseek-v4-flash")
     config["output_language"] = "Chinese"
-    config["max_debate_rounds"] = 1
-    config["max_risk_discuss_rounds"] = 1
+    # 轮次由 .env 的 TRADINGAGENTS_MAX_DEBATE_ROUNDS / TRADINGAGENTS_MAX_RISK_ROUNDS 控制
+    # （DEFAULT_CONFIG 导入期已折叠），不再写死 1。下限 1，理由同 main.py。
+    config["max_debate_rounds"] = max(1, int(config["max_debate_rounds"]))
+    config["max_risk_discuss_rounds"] = max(1, int(config["max_risk_discuss_rounds"]))
 
     ta = TradingAgentsGraph(debug=False, config=config)
     _, decision = ta.propagate(ticker, analysis_date)

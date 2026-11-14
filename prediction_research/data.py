@@ -36,7 +36,7 @@ def _number(row: dict[str, str], field: str) -> float:
     return float(value)
 
 
-def load_cache(symbol: str, directory: Path) -> SeriesSnapshot:
+def load_cache(symbol: str, directory: Path, min_bars: int = 61) -> SeriesSnapshot:
     path = directory / f"cache_{symbol}.csv"
     raw = path.read_bytes()
     bars: dict[date, Bar] = {}
@@ -63,17 +63,21 @@ def load_cache(symbol: str, directory: Path) -> SeriesSnapshot:
     ordered = tuple(bars[key] for key in sorted(bars))
     # 60 lookback observations plus the current bar form one feature row.
     # Fitting and validation retain their own, larger sample requirements.
-    if len(ordered) < 61:
+    if len(ordered) < max(1,min_bars):
         raise ValueError(f"{symbol}: only {len(ordered)} valid bars")
-    provider_metadata = None
+    from .price_provenance import read_price_metadata
+    digest = hashlib.sha256(raw).hexdigest()
+    provider_metadata = read_price_metadata(path, digest)
     manifest_path = directory / "manifest.json"
-    if manifest_path.exists():
+    if provider_metadata is None and manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             provider_metadata = manifest.get("assets", {}).get(symbol)
+            if isinstance(provider_metadata, dict) and provider_metadata.get("sha256") and provider_metadata["sha256"] != digest:
+                provider_metadata = {"status": "manifest_hash_mismatch"}
         except (OSError, json.JSONDecodeError):
             provider_metadata = {"status": "manifest_unreadable"}
-    return SeriesSnapshot(symbol, ordered, str(path.resolve()), hashlib.sha256(raw).hexdigest(), provider_metadata)
+    return SeriesSnapshot(symbol, ordered, str(path.resolve()), digest, provider_metadata)
 
 
 def configured_data_dirs(cfg: dict) -> list[Path]:

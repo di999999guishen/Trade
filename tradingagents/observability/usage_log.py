@@ -87,6 +87,27 @@ def _usage_from_mapping(usage: Any) -> tuple[int, int, int] | None:
     return prompt, completion, total
 
 
+def _agent_from_run_context() -> str:
+    """Best-effort graph-node (agent) name for the current LLM call.
+
+    LangGraph records the executing node under ``config["metadata"]
+    ["langgraph_node"]``. The value is reachable from the runnable-config
+    contextvar while an LLM call runs inside a node, but it is not passed to
+    ``on_llm_end`` via the ``metadata`` kwarg in this LangGraph version, so
+    we read it from the active context instead. Returns ``""`` when no node
+    is on the stack (e.g. auxiliary LLM calls outside the graph).
+    """
+    try:
+        from langchain_core.runnables.config import var_child_runnable_config
+
+        rc = var_child_runnable_config.get()
+        if isinstance(rc, dict):
+            return str((rc.get("metadata") or {}).get("langgraph_node") or "")
+    except Exception:  # pragma: no cover - observability must never break a run
+        pass
+    return ""
+
+
 def _extract_usage(response: Any) -> tuple[tuple[int, int, int] | None, str]:
     """Return ``((prompt, completion, total), model)`` using the documented priority."""
     model = ""
@@ -123,10 +144,22 @@ class UsageRecorder(BaseCallbackHandler):
                 return
             prompt_tokens, completion_tokens, total_tokens = usage
 
-            metadata = kwargs.get("metadata")
-            agent = ""
-            if isinstance(metadata, dict):
-                agent = str(metadata.get("langgraph_node") or "")
+            # Agent (graph node) attribution. LangGraph stamps the node name
+            # into the runnable-config metadata as ``langgraph_node``; it is
+            # NOT surfaced through the callback ``on_llm_end`` metadata kwarg
+            # in this LangGraph version, so read it from the active run
+            # context instead. Falls back to the callback metadata/tags for
+            # any future wiring that does forward it.
+            agent = _agent_from_run_context()
+            if not agent:
+                metadata = kwargs.get("metadata")
+                if isinstance(metadata, dict):
+                    agent = str(metadata.get("langgraph_node") or "")
+            if not agent:
+                for tag in (kwargs.get("tags") or []):
+                    if isinstance(tag, str) and tag.startswith("langgraph_node:"):
+                        agent = tag.split(":", 1)[1]
+                        break
 
             record = {
                 "ts": datetime.now().astimezone().isoformat(timespec="seconds"),

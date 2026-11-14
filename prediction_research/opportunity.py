@@ -165,7 +165,7 @@ described as verified point-in-time data for a historical backtest.
                         category = "range_no_edge"
     if quality["history_status"] != "available":
         reason_codes.append(quality["history_status"])
-    asset = classify_etf(row.get("name", ""))
+    asset = classify_etf(row.get("name", ""), etf_board=True, symbol=row.get('symbol'))
     positive = snapshot_category != "insufficient_data" and flow > 0 and pct >= RULES["flow_watch_threshold_pct"] and change >= 0
     negative = snapshot_category != "insufficient_data" and flow < 0 and pct <= -RULES["flow_watch_threshold_pct"]
     watchlists = []

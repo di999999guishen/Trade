@@ -76,8 +76,13 @@ def main() -> int:
     config["deep_think_llm"] = os.getenv("TRADINGAGENTS_DEEP_THINK_LLM", "deepseek-v4-flash")
     config["quick_think_llm"] = os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "deepseek-v4-flash")
     config["output_language"] = "Chinese"
-    config["max_debate_rounds"] = 1
-    config["max_risk_discuss_rounds"] = 1
+    # 辩论轮次的唯一开关是 .env 的 TRADINGAGENTS_MAX_DEBATE_ROUNDS /
+    # TRADINGAGENTS_MAX_RISK_ROUNDS —— DEFAULT_CONFIG 在导入期已把 env 折叠进来
+    # （default_config.py::_apply_env_overrides），此处不再写死。
+    # 旧实现无条件赋 1，使 env 设了也不生效（2026-11-08 修）。
+    # 下限钳到 1：0 会让 ConditionalLogic 的 count >= 2*rounds 立即成立，整段辩论被跳过。
+    config["max_debate_rounds"] = max(1, int(config["max_debate_rounds"]))
+    config["max_risk_discuss_rounds"] = max(1, int(config["max_risk_discuss_rounds"]))
     # 🔒 全程国内/不限流数据源（禁用 yfinance/Reddit/StockTwits/FRED）
     config["data_vendors"] = {
         "core_stock_apis": "akshare",

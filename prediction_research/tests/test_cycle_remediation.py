@@ -303,21 +303,23 @@ def test_cached_cycle_returns_waiting_and_does_not_mutate_config(cfg, monkeypatc
     assert "本轮告警" in report and "llm_step_not_run" in report and "TradingAgents 覆盖" in report
 
 
-def test_switching_off_skip_flag_restores_plain_complete(cfg, monkeypatch):
+def test_historical_settlement_cannot_replace_current_agent_batch(cfg, monkeypatch):
     write_histories(cfg)
     snapshot(cfg)
     cfg["workflow"]["skip_tradingagents"] = False
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
-    monkeypatch.setattr("prediction_research.cycle.run_tradingagents", lambda *_: (Path("batch.json"), {"items": []}))
+    batch = Path(cfg["_project_dir"]) / "batch.json"
+    batch.write_text('{"items": [], "candidates": []}', encoding="utf-8")
+    monkeypatch.setattr("prediction_research.cycle.run_tradingagents", lambda *_: (batch, {"items": [], "candidates": []}))
     monkeypatch.setattr("prediction_research.cycle.settle_agent_analyses",
                         lambda _: {"successful_analyses": 3, "settled": 3, "scored": 3, "items": []})
     result = run_cycle(cfg, 2, True)
-    # 开关关闭 + 有结算 → 不加后缀、不发告警。
-    assert result["outcome"] == "complete_with_data_waits", result.get("archive")
+    # Historical settlement is not evidence of a completed current batch.
+    assert result["outcome"] == "partial_failure", result.get("archive")
     assert result["llm_coverage"] == {"analyses_settled": 3, "analyses_produced": 0,
                                       "analyses_reused": 0, "skip_flag": False,
-                                      "skip_reason": None, "usable": True}
-    assert result["warnings"] == []
+                                      "skip_reason": None, "usable": False}
+    assert result["warnings"][0]["code"] == "llm_step_not_run"
 
 
 def test_llm_produced_without_settlement_is_usable(cfg, monkeypatch):
@@ -331,15 +333,18 @@ def test_llm_produced_without_settlement_is_usable(cfg, monkeypatch):
     snapshot(cfg)
     cfg["workflow"]["skip_tradingagents"] = False
     monkeypatch.setattr("prediction_research.cycle.now_utc", lambda: "2024-08-17T12:00:00+00:00")
+    batch = Path(cfg["_project_dir"]) / "batch.json"
+    batch.write_text('{}', encoding="utf-8")
     monkeypatch.setattr("prediction_research.cycle.run_tradingagents",
-                        lambda *_: (Path("batch.json"), {"items": [{"status": "ok", "reused": False},
+                        lambda *_: (batch, {"candidates": [{}, {}, {}], "items": [{"status": "ok", "reused": False},
                                                                    {"status": "ok", "reused": True},
                                                                    {"status": "failed"}]}))
     # 当日产出还没到结算期：settled=0。
     monkeypatch.setattr("prediction_research.cycle.settle_agent_analyses",
                         lambda _: {"successful_analyses": 0, "settled": 0, "scored": 0, "items": []})
     result = run_cycle(cfg, 2, True)
-    assert result["outcome"] == "complete_with_data_waits", result.get("archive")
+    # Some useful analyses exist, but one failure must prevent full success.
+    assert result["outcome"] == "partial_failure", result.get("archive")
     assert result["llm_coverage"]["usable"] is True
     assert result["llm_coverage"]["analyses_produced"] == 2
     assert result["llm_coverage"]["analyses_reused"] == 1

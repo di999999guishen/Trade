@@ -25,6 +25,26 @@
     "minimum_train_observation_days": 20,
     "minimum_test_rows": 200
   },
+  "factor_research": {
+    "enabled": true,
+    "mode": "shadow",
+    "inject_agent_context": false,
+    "note": "Expanded and return-focused price-channel screens are recorded alongside production; agent injection is disabled and production ordering is unchanged."
+  },
+  "universe_assessment": {
+    "enabled": true,
+    "scope": "all_records_in_provider_etf_snapshot",
+    "reference_data_path": null
+  },
+  "screen_diagnostics": {
+    "enabled": true,
+    "mode": "observe_only",
+    "last_good_path": "state/screen_last_good.json",
+    "max_rejection_samples": 5,
+    "top_group_breakdown": 5,
+    "source_priority": ["eastmoney", "sina"],
+    "note": "Mechanism adapted from ZhuLinsen/daily_stock_analysis screening engine (Apache-2.0, rev ac9c33df). Schema v2 adds field_coverage / quote_freshness / score_distribution / factor_availability / guard_counts / group_competition / staleness / run_contract - all observation-only aggregates, no candidate lists. observe_only never reorders/adds/removes selected, never changes rule_hash or frozen screen_batches semantics, last-good is diagnostics-only and NEVER a candidate source. This block MUST stay at top level - moving it into etf_market.screen changes rule_identity. Set enabled=false to roll back."
+  },
   "etf_market": {
     "snapshot_dir": "datasets/etf_market",
     "screen": {
@@ -38,13 +58,16 @@
       "exclude_money_market_etfs": true,
       "money_market_max_atr_pct": 0.05,
       "money_market_price_band": 0.5,
+      "screen_mode": "composite",
+      "overheat_threshold_pct": 7.0,
       "score_weights": {
         "main_flow": 0.30,
         "liquidity": 0.25,
         "momentum": 0.10,
         "order_divergence": 0.10,
         "flow_to_cap": 0.10,
-        "relative_strength": 0.15
+        "relative_strength": 0.15,
+        "overheat_penalty": 0.10
       }
     }
   },
@@ -60,7 +83,15 @@
     "flow_round_trip_cost_bps": 10,
     "flow_grade_thresholds_pct": {"mild": 3.0, "strong": 10.0, "extreme": 20.0},
     "skip_tradingagents": false,
-    "skip_reason": "mandatory_per_user_20261007: the AI agent (run-agents / TradingAgents multi-agent debate) is a REQUIRED step of the ETF research pipeline and must always run. The user's 'only use hy3, no other model' instruction means do NOT hardcode deepseek-v4-pro or substitute other non-standard/paid models; run-agents uses the project-standard deepseek-v4-flash (from .env), which is allowed and required. Hy3 (the assistant) still orchestrates and produces the consolidated analysis, but must NOT suppress this framework step."
+    "skip_reason": "mandatory_per_user_20261007: the AI agent (run-agents / TradingAgents multi-agent debate) is a REQUIRED step of the ETF research pipeline and must always run. The user's 'only use hy3, no other model' instruction means do NOT hardcode deepseek-v4-pro or substitute other non-standard/paid models; run-agents uses the project-standard deepseek-v4-flash (from .env), which is allowed and required. Hy3 (the assistant) still orchestrates and produces the consolidated analysis, but must NOT suppress this framework step.",
+    "require_history_for_agents": true,
+    "min_agent_history_bars": 60,
+    "backfill_history_on_skip": false,
+    "overheat_threshold_pct": 7.0,
+    "rule_gate_allow_divergence": false,
+    "rule_gate_min_amount": 50000000,
+    "rule_gate_chanlun_weight": 0.0,
+    "rule_gate_min_confirm": 1.0
   },
   "horizons": [5, 20],
   "model": {

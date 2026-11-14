@@ -71,7 +71,12 @@ def _cached_get(url: str, name: str) -> bytes | None:
         data = resp.content
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(data)
-        tmp.rename(path)
+        # 必须用 os.replace 而非 Path.rename：Windows 下 rename 到已存在文件会抛
+        # WinError 183「当文件已存在时，无法创建该文件」。
+        # 这个 bug 的杀伤力在于隐蔽 —— 首次抓取成功、缓存建立，24h TTL 到期后
+        # 每次刷新都在这里炸，_cached_get 返回 None，13F 从此永久显示「网络/CIK 问题」，
+        # 看起来像 SEC EDGAR 不通，实际是本地写缓存失败（2026-10-20 定位）。
+        os.replace(tmp, path)
         return data
     except Exception as e:
         print(f"  [WARN] 取 {url} 失败: {str(e)[:100]}")

@@ -16,7 +16,24 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("doctor", help="inspect data coverage without changing source data")
     commands.add_parser("status", help="show the end-to-end workflow checkpoint")
     commands.add_parser("report", help="build a consolidated auditable research report")
+    assess = commands.add_parser("assess-universe", help="class-specific assessment for every ETF snapshot record, before filters")
+    assess.add_argument("--output-root")
+    assess.add_argument("--decision-at", help="timezone-aware decision time; source must already be available")
     commands.add_parser("backtest-flow", help="reconstruct historical ETF screens with paired cohort baselines")
+    review = commands.add_parser("screen-review", help="offline paired screen diagnostics; no production weight changes")
+    review.add_argument("--output", required=True)
+    review.add_argument("--top", type=int, default=10)
+    factor_review = commands.add_parser("factor-review", help="paired current and expanded-factor screens, offline")
+    factor_review.add_argument("--output", required=True)
+    commands.add_parser("settle-factor-shadow", help="settle frozen forward factor observations; never promote weights")
+    experiment = commands.add_parser("screen-experiment", help="registered continuous ETF portfolio experiment, offline")
+    experiment.add_argument("--snapshot", required=True)
+    experiment.add_argument("--output-root", required=True)
+    experiment.add_argument("--contract")
+    returns = commands.add_parser("return-experiment", help="return-focused fixed rules and chronological model-selection replay")
+    returns.add_argument("--snapshot", required=True)
+    returns.add_argument("--output-root", required=True)
+    returns.add_argument("--contract")
     integrate = commands.add_parser("integrate-etfs", help="run ETF evidence stages with per-stage Markdown")
     integrate.add_argument("--universe", help="configured ETF experiment universe")
     commands.add_parser("evidence-status", help="show ETF evidence and deferred external modules")
@@ -97,6 +114,24 @@ def main(argv: list[str] | None = None) -> int:
             result = {key: payload[key] for key in ("outcome", "summary_path", "scope")}
             result["stages"] = [{key: row[key] for key in ("stage", "name", "status", "markdown_path")}
                                 for row in payload["stages"]]
+        elif args.command == "assess-universe":
+            from .universe_assessment import run_universe_assessment
+            result = run_universe_assessment(cfg, args.decision_at, args.output_root)
+        elif args.command == "screen-experiment":
+            from .screen_portfolio import run_portfolio_experiment
+            result = run_portfolio_experiment(args.snapshot, args.output_root, args.contract)
+        elif args.command == "return-experiment":
+            from .return_research import run_return_experiment
+            result = run_return_experiment(args.snapshot, args.output_root, args.contract)
+        elif args.command == "factor-review":
+            from .screen_shadow import review_historical_factors
+            result = review_historical_factors(cfg, args.output)
+        elif args.command == "settle-factor-shadow":
+            from .screen_shadow import settle_factor_shadows
+            result = settle_factor_shadows(cfg)
+        elif args.command == "screen-review":
+            from .screen_research import run_screen_review
+            result = run_screen_review(cfg, args.output, args.top)
         elif args.command == "backtest-flow":
             from .flow_backtest import run_flow_backtest
 

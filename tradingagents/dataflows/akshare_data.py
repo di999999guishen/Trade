@@ -399,6 +399,30 @@ def load_ohlcv_akshare(symbol: str, curr_date: str) -> pd.DataFrame:
 
 # ── Vendor interface functions ────────────────────────────────────────────────
 
+def _round_ohlc_value(value: float) -> float:
+    """Round an OHLC price without erasing sub-1 CNY ETF granularity.
+
+    A-share ETFs quote in 0.001 CNY ticks. A blanket ``round(2)`` collapses
+    0.486 / 0.487 / 0.488 into 0.49, so the CSV handed to the LLM loses the
+    short-term price structure entirely (support/resistance, ATR, breakouts).
+    Prices >= 1 CNY keep the historical 2-decimal behaviour, so existing
+    reports and indicator values do not shift.
+
+    Scope: this only affects the *display CSV* returned by
+    ``get_akshare_data_online``. The cached OHLCV written by
+    ``load_ohlcv_akshare`` and the stockstats indicator window keep full
+    source precision.
+    """
+    if pd.isna(value):
+        return value
+    v = float(value)
+    if 0 < v < 0.1:      # HK penny stocks / ultra-low-priced instruments
+        return round(v, 4)
+    if 0 < v < 1.0:      # low-priced A-share ETFs (0.486, 0.488, ...)
+        return round(v, 3)
+    return round(v, 2)   # unchanged behaviour for >= 1 CNY
+
+
 def get_akshare_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
     start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
@@ -432,7 +456,7 @@ def get_akshare_data_online(
 
     for col in ["Open", "High", "Low", "Close"]:
         if col in df.columns:
-            df[col] = df[col].round(2)
+            df[col] = df[col].map(_round_ohlc_value)
 
     csv_string = df.to_csv(index=False)
     label = canonical if canonical == symbol.upper() else f"{canonical} (from {symbol})"
