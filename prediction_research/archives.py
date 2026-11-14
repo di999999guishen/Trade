@@ -6,6 +6,7 @@ database through the application's schema/migration helper.
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import re
@@ -49,6 +50,61 @@ def redact_config(value):
 
 def _json_bytes(value) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+
+
+def _json_sha256(value) -> str:
+    """Hash a JSON document without ever materialising its full byte string.
+
+    ``_json_bytes`` builds one ``str`` plus one ``bytes`` copy of the whole
+    document. For the frozen cycle report (6+ MB, ~21 MB as Python objects)
+    that peak is avoidable: ``iterencode`` streams small chunks straight into
+    the digest. The archived bytes remain identical because the encoder
+    options and the trailing newline are unchanged.
+    """
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+    digest = hashlib.sha256()
+    for chunk in encoder.iterencode(value):
+        digest.update(chunk.encode("utf-8"))
+    digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def collect_references(value, references: list) -> None:
+    """Append lightweight ``(kind, reference)`` pairs found in a decoded JSON doc.
+
+    Kept as an explicit module-level walker so large documents can be released
+    immediately after their references have been harvested. Semantics are
+    byte-for-byte the same as the former nested ``inspect()`` closure: every
+    child is still recursed into, including children of a matched key.
+    """
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in {"source_snapshot", "data_snapshot", "history_snapshot"} and isinstance(child, dict):
+                references.append(("data_snapshot" if key == "history_snapshot" else key, child))
+            elif (key == "history_path" and isinstance(child, str)
+                  and not isinstance(value.get("history_snapshot"), dict)):
+                references.append(("data_snapshot", {"path": child, "sha256": value.get("history_sha256")}))
+            elif key == "snapshots" and isinstance(child, dict):
+                references.extend(("data_snapshot", item) for item in child.values() if isinstance(item, dict))
+            elif key == "price_snapshots" and isinstance(child, dict):
+                references.extend(("data_snapshot", {"path": f"cache_{symbol}.csv", "sha256": sha})
+                                  for symbol, sha in child.items() if _COMPONENT.fullmatch(str(symbol)))
+            collect_references(child, references)
+    elif isinstance(value, list):
+        for child in value:
+            collect_references(child, references)
+
+
+def write_json_stream(target: Path, value, *, sort_keys: bool = True) -> None:
+    """Write an indented JSON document without building its full text in RAM."""
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=sort_keys, indent=2, allow_nan=False)
+    # newline="" keeps the exact LF bytes produced by the old _json_bytes
+    # path on Windows; default text mode would emit CRLF and change every
+    # archived SHA256 (and break restore byte-identity).
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        for chunk in encoder.iterencode(value):
+            handle.write(chunk)
+        handle.write("\n")
 
 
 def _hash(path: Path) -> str:
@@ -122,18 +178,33 @@ def _database_snapshot(source: Path, target: Path) -> int:
             if "runs" in tables:
                 columns = {row[1] for row in writer.execute("PRAGMA table_info(runs)")}
                 if {"run_id", "config_json"} <= columns:
-                    for run_id, raw in writer.execute("SELECT run_id,config_json FROM runs").fetchall():
-                        try:
-                            clean = json.dumps(redact_config(json.loads(raw)), ensure_ascii=False, sort_keys=True)
-                        except (TypeError, ValueError):
-                            clean = json.dumps({"status": "unreadable_config_redacted"})
-                        try:
-                            changed = json.loads(clean) != json.loads(raw)
-                        except (TypeError, ValueError):
-                            changed = True
-                        if changed:
-                            writer.execute("UPDATE runs SET config_json=? WHERE run_id=?", (clean, run_id))
-                            redacted_rows += 1
+                    # Bounded batches instead of fetchall(): a long-running
+                    # research DB can hold thousands of run configs, and holding
+                    # every raw + redacted JSON string at once was a needless
+                    # allocation peak right before the archive was published.
+                    # Writes happen on the same connection, so the read cursor is
+                    # drained in batches with an independent list before UPDATE.
+                    cursor = writer.execute("SELECT run_id,config_json FROM runs")
+                    while True:
+                        batch = cursor.fetchmany(64)
+                        if not batch:
+                            break
+                        pending = []
+                        for run_id, raw in batch:
+                            try:
+                                clean = json.dumps(redact_config(json.loads(raw)), ensure_ascii=False, sort_keys=True)
+                            except (TypeError, ValueError):
+                                clean = json.dumps({"status": "unreadable_config_redacted"})
+                            try:
+                                changed = json.loads(clean) != json.loads(raw)
+                            except (TypeError, ValueError):
+                                changed = True
+                            if changed:
+                                pending.append((clean, run_id))
+                        if pending:
+                            writer.executemany("UPDATE runs SET config_json=? WHERE run_id=?", pending)
+                            redacted_rows += len(pending)
+                        del pending, batch
                     if redacted_rows:
                         writer.commit()
                         # Remove old credential bytes in free pages of this copy.
@@ -225,7 +296,7 @@ def archive_cycle(cfg: dict, report: dict, cycle_path: str | Path) -> dict:
         day = when.astimezone(ZoneInfo(cfg.get("timezone", "Asia/Shanghai"))).date().isoformat()
         frozen = _frozen_cycle(report)
         clean_cfg = redact_config(cfg)
-        identity = hashlib.sha256(_json_bytes({"cycle": frozen, "config": clean_cfg})).hexdigest()
+        identity = _json_sha256({"cycle": frozen, "config": clean_cfg})
         root = resolve_project_path(cfg, options.get("root_dir", "archives")).resolve()
         parent = root / day
         final = parent / cycle_id
@@ -249,13 +320,21 @@ def archive_cycle(cfg: dict, report: dict, cycle_path: str | Path) -> dict:
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ArchiveError(f"archive initialization failed ({type(exc).__name__})") from exc
 
-    files, missing, documents = [], [], []
+    files, missing, references = [], [], []
     copied = {}
 
     def write(relative: str, raw: bytes, kind: str, source: str | None = None):
         target = staging / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw)
+        files.append({"archive_path": relative, "kind": kind, "source_path": source,
+                      "size": target.stat().st_size, "sha256": _hash(target)})
+
+    def write_json(relative: str, value, kind: str, source: str | None = None):
+        """Stream large JSON documents; never hold their full text in memory."""
+        target = staging / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json_stream(target, value)
         files.append({"archive_path": relative, "kind": kind, "source_path": source,
                       "size": target.stat().st_size, "sha256": _hash(target)})
 
@@ -289,16 +368,26 @@ def archive_cycle(cfg: dict, report: dict, cycle_path: str | Path) -> dict:
         files.append(entry)
         copied[key] = relative
         if parse and source.suffix == ".json":
+            # Harvest input references immediately, then release the decoded
+            # document. The previous implementation kept EVERY parsed artifact
+            # alive until the end of archive_cycle; with a full ETF cycle that
+            # was >100 MB of live Python objects on top of the frozen report,
+            # and the resulting MemoryError escaped into the CLI (2026-11-13
+            # 09:56, run 2026-11-12_9fdd550c5c85).
             try:
-                documents.append(json.loads(target.read_text(encoding="utf-8")))
+                document = json.loads(target.read_text(encoding="utf-8"))
             except (ValueError, UnicodeError):
                 missing.append({"kind": kind, "source_path": recorded, "reason": "invalid_json"})
+            else:
+                collect_references(document, references)
+                del document
+                gc.collect()
 
     try:
-        write("cycle.json", _json_bytes(frozen), "cycle", str(Path(cycle_path).resolve()))
+        write_json("cycle.json", frozen, "cycle", str(Path(cycle_path).resolve()))
         if not Path(cycle_path).is_file():
             missing.append({"kind": "cycle", "reason": "original_cycle_file_missing"})
-        write("config.redacted.json", _json_bytes(clean_cfg), "configuration")
+        write_json("config.redacted.json", clean_cfg, "configuration")
         runs = resolve_project_path(cfg, cfg["runs_dir"]).resolve()
         for role, recorded in sorted(report.get("artifacts", {}).items()):
             if not isinstance(recorded, str):
@@ -323,28 +412,11 @@ def archive_cycle(cfg: dict, report: dict, cycle_path: str | Path) -> dict:
                 if cfg.get(setting):
                     cache_roots.append(resolve_project_path(cfg, cfg[setting]).resolve())
             snapshot_root = resolve_project_path(cfg, cfg.get("etf_market", {}).get("snapshot_dir", "datasets/etf_market")).resolve()
-            references = []
-
-            def inspect(value):
-                if isinstance(value, dict):
-                    for key, child in value.items():
-                        if key in {"source_snapshot", "data_snapshot", "history_snapshot"} and isinstance(child, dict):
-                            references.append(("data_snapshot" if key == "history_snapshot" else key, child))
-                        elif (key == "history_path" and isinstance(child, str)
-                              and not isinstance(value.get("history_snapshot"), dict)):
-                            references.append(("data_snapshot", {"path": child, "sha256": value.get("history_sha256")}))
-                        elif key == "snapshots" and isinstance(child, dict):
-                            references.extend(("data_snapshot", item) for item in child.values() if isinstance(item, dict))
-                        elif key == "price_snapshots" and isinstance(child, dict):
-                            references.extend(("data_snapshot", {"path": f"cache_{symbol}.csv", "sha256": sha})
-                                              for symbol, sha in child.items() if _COMPONENT.fullmatch(str(symbol)))
-                        inspect(child)
-                elif isinstance(value, list):
-                    for child in value:
-                        inspect(child)
-
-            for document in documents + [frozen]:
-                inspect(document)
+            # Artifact references were harvested one document at a time inside
+            # ``collect`` (and those documents released immediately). Only the
+            # frozen cycle report remains to be walked here, so the archive
+            # never holds all decoded artifacts in memory simultaneously.
+            collect_references(frozen, references)
             for kind, reference in references:
                 recorded = reference.get("path")
                 if not isinstance(recorded, str):
@@ -384,7 +456,7 @@ def archive_cycle(cfg: dict, report: dict, cycle_path: str | Path) -> dict:
                     "limitations": ["local archive is not offsite disaster recovery", "SHA256 detects accidental damage, not malicious rewriting",
                                     "raw news and external-agent directories are not recursively copied",
                                     "restore files to an isolated directory; remap recorded paths before rerunning"]}
-        (staging / "manifest.json").write_bytes(_json_bytes(manifest))
+        write_json_stream(staging / "manifest.json", manifest)
         (staging / "manifest.sha256").write_text(_hash(staging / "manifest.json") + "\n", encoding="ascii")
         if not verify_archive(staging)["ok"]:
             raise ArchiveError("new archive failed verification; no archive published")

@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .archives import write_json_stream
 from .adapters.eastmoney import fetch_universe
 from .adapters.eastmoney_etf import fetch_etf_snapshot
 from .config import market_data_dir, resolve_project_path
@@ -76,8 +77,32 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
                                            hashlib.sha256(source.read_bytes()).hexdigest() for source in source_files}}
 
     def persist():
+        """Stream the cycle report to disk.
+
+        The old implementation called ``json.dumps(report)`` and then
+        ``write_text`` - it held one full ``str`` plus one full ``bytes`` copy
+        of a 6+ MB report. When archive_cycle raised MemoryError on
+        2026-11-13, this very call OOM'd a second time from inside the
+        exception handler, escaped to the CLI and made the stage exit 1 even
+        though every analysis artifact had already been written.
+
+        Streaming via ``iterencode`` removes that peak. If memory is still
+        exhausted, fall back to a compact report that always preserves the
+        operational verdict (outcome / archive / prediction ids / artifacts)
+        and is explicitly marked as truncated. Persisting a failure must never
+        itself become an uncaught exception.
+        """
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            write_json_stream(temporary, report, sort_keys=False)
+        except MemoryError:
+            import gc
+            gc.collect()
+            compact = {key: value for key, value in report.items()
+                       if key not in {"steps", "runtime", "universe_assessment", "artifacts_report"}}
+            compact["report_truncated_due_to_memory_pressure"] = True
+            compact["truncated_fields"] = sorted(set(report) - set(compact))
+            write_json_stream(temporary, compact, sort_keys=False)
         temporary.replace(path)
 
     def blocked(name, reason):
@@ -314,11 +339,25 @@ def run_cycle(cfg: dict, top_n: int | None = None, skip_fetch: bool = False) -> 
     with connect(resolve_project_path(cfg, cfg["state_db"])) as connection:
         record_run(connection, "cycle", cfg, path)
     from .archives import archive_cycle
+    # A full cycle has been accumulating decoded snapshots, backtest samples
+    # and 10 agent reports for hours. Release everything unreachable before
+    # the archive pass, which is the most allocation-heavy tail stage.
+    import gc
+    gc.collect()
     prior_outcome = report["outcome"]
     try:
         report["archive"] = {**archive_cycle(cfg, report, path), "cycle_outcome_before_archive": prior_outcome}
         if report["archive"]["status"] not in {"complete", "disabled"}:
             report["outcome"] = "partial_failure"
+    except MemoryError:
+        # 2026-11-13 09:56: archive_cycle exhausted memory while packing the
+        # 113 MB research.db + 2141 input files. Record an operational failure
+        # with a tiny payload; the analysis artifacts are already on disk.
+        gc.collect()
+        report["archive"] = {"status": "failed", "error_type": "MemoryError",
+                             "error": "archive failed; insufficient memory; cycle analysis artifacts are intact",
+                             "cycle_outcome_before_archive": prior_outcome}
+        report["outcome"] = "partial_failure"
     except Exception as exc:
         report["archive"] = {"status": "failed", "error_type": type(exc).__name__,
                              "error": str(exc) if type(exc).__name__ == "ArchiveError" else "archive failed; inspect storage and inputs",
